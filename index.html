@@ -7,6 +7,37 @@
   <title>Uma Stat Output</title>
   <link rel="stylesheet" href="./styles.css" />
   <link rel="stylesheet" href="./career.css" />
+  <style>
+    /* Keep card copy aligned even when support titles have different lengths. */
+    .search-result .search-titleline,
+    .selected-card .card-titleline {
+      display: -webkit-box;
+      height: 2.5em;
+      line-height: 1.25;
+      overflow: hidden;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+
+    .search-result .name-row,
+    .selected-card .name-row {
+      min-height: 22px;
+      flex-wrap: nowrap;
+    }
+
+    .search-result .search-name,
+    .selected-card .selected-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .search-result .rarity-chip,
+    .selected-card .rarity-chip {
+      flex: 0 0 auto;
+    }
+  </style>
 </head>
 <body>
   <div class="shell">
