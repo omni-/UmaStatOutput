@@ -7,7 +7,7 @@ from pathlib import Path
 
 DEFAULT_URL="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/main/src/cards/gl.js"
 DEFAULT_EVENTS_URL="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/main/src/card-events.js"
-DEFAULT_TITLES_URL="https://umamusu.wiki/api.php?"+urllib.parse.urlencode({
+DEFAULT_TITLES_URL="https://umamusu.wiki/w/api.php?"+urllib.parse.urlencode({
     "action":"cargoquery",
     "format":"json",
     "tables":"Game_Supports",
