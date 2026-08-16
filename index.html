@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Placement-weighted Umamusume support card training output calculator." />
+  <title>Uma Stat Output</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div>
+        <div class="eyebrow">UMAMUSUME · GLOBAL</div>
+        <h1>Uma Stat Output</h1>
+        <p class="lede">Compare support cards by <strong>expected training output</strong>, not just the size of a rainbow click.</p>
+      </div>
+      <div class="source-pill" id="source-pill">Loading support data…</div>
+    </header>
+
+    <main>
+      <section class="panel controls-panel">
+        <div class="panel-heading">
+          <div><div class="section-kicker">1 · Environment</div><h2>Tell it what kind of run you're in</h2></div>
+          <button class="ghost-button" id="reset-settings" type="button">Reset</button>
+        </div>
+        <div class="control-grid">
+          <label class="control-card accent-control">
+            <span class="control-label">Global Specialty Priority</span>
+            <div class="number-with-unit"><input id="global-spec" type="number" min="-100" max="300" step="1" value="20" /><span>得意率</span></div>
+            <input id="global-spec-range" type="range" min="0" max="100" step="1" value="20" />
+            <span class="control-help">Added to every card before unique Specialty multipliers. Grand Live default: +20.</span>
+            <div class="preset-row"><button type="button" class="mini-button" data-spec-preset="0">None +0</button><button type="button" class="mini-button active" data-spec-preset="20">Grand Live +20</button></div>
+          </label>
+          <label class="control-card"><span class="control-label">Training baseline</span><select id="training-profile"><option value="gl-late">Grand Live · late-run</option><option value="gl-summer">Grand Live · summer</option></select><span class="control-help">Base training values from Euophrys' Global scenario model.</span></label>
+          <label class="control-card"><span class="control-label">Mood</span><select id="motivation"><option value="0.2">Great · +20%</option><option value="0.1">Good · +10%</option><option value="0">Normal · 0%</option><option value="-0.1">Bad · −10%</option><option value="-0.2">Awful · −20%</option></select><span class="control-help">Used in the same multiplicative form as the Euophrys calculator.</span></label>
+          <label class="control-card"><span class="control-label">Skill Point value</span><div class="number-with-unit"><input id="sp-weight" type="number" min="0" max="5" step="0.1" value="1" /><span>× stat</span></div><span class="control-help">Only changes the one-number ranking. The per-stat EV stays raw.</span></label>
+        </div>
+        <details class="advanced" id="advanced-settings"><summary>Advanced assumptions</summary><div class="advanced-grid"><div><div class="control-label">Uma growth bonuses</div><div class="growth-grid" id="growth-grid"></div></div><div><div class="control-label">Ranking metric</div><label class="radio-row"><input type="radio" name="rank-mode" value="specialty" checked /> Specialty EV <span>rainbow opportunity only</span></label><label class="radio-row"><input type="radio" name="rank-mode" value="all" /> All-placement EV <span>follow the card wherever it lands</span></label></div></div></details>
+      </section>
+
+      <section class="panel cards-panel">
+        <div class="panel-heading"><div><div class="section-kicker">2 · Cards</div><h2>Pick supports to compare</h2></div><div class="count-badge"><span id="selected-count">0</span> / 10</div></div>
+        <div class="search-wrap"><input id="card-search" type="search" autocomplete="off" placeholder="Search character or support ID…" /><div id="search-results" class="search-results" hidden></div></div>
+        <div id="selected-cards" class="selected-cards empty-state">Search for a card above. Cards are loaded from Euophrys' Global support dataset and default to their highest available limit break.</div>
+      </section>
+
+      <section class="panel results-panel">
+        <div class="panel-heading results-heading"><div><div class="section-kicker">3 · Output</div><h2>Placement-weighted comparison</h2></div><div class="formula-chip">EV = appearance × marginal training gain</div></div>
+        <div id="results-empty" class="results-empty">Add at least one support card to see its output.</div>
+        <div id="results" hidden><div class="table-wrap"><table><thead><tr><th>#</th><th>Support</th><th>Spec priority</th><th>Specialty appearance</th><th>Rainbow marginal</th><th>Specialty EV</th><th>All-placement EV</th></tr></thead><tbody id="results-body"></tbody></table></div><div id="result-details" class="result-details"></div></div>
+      </section>
+
+      <section class="method-card"><h3>What this number means</h3><p><strong>Specialty EV</strong> is the card's probability of landing on its preferred training multiplied by the card's marginal rainbow output there. <strong>All-placement EV</strong> also includes its non-rainbow marginal contribution on the other four trainings, under the simplifying assumption that you follow the card and click whichever room it occupies.</p><p>This is an isolated-card benchmark, not a full deck simulator. Multi-card friendship multiplication, bond timing, events, race bonuses, and your actual turn-selection policy can change real run value. Cards with context-dependent unique effects are flagged.</p></section>
+    </main>
+
+    <footer>Support data and training-model conventions derived from <a href="https://github.com/Euophrys/umamusume-tierlist" target="_blank" rel="noreferrer">Euophrys/umamusume-tierlist</a>. Umamusume: Pretty Derby belongs to Cygames.</footer>
+  </div>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>
