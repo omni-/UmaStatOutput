@@ -6,6 +6,7 @@
   <meta name="description" content="Placement-weighted Umamusume support card training output calculator." />
   <title>Uma Stat Output</title>
   <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./career.css" />
 </head>
 <body>
   <div class="shell">
@@ -34,7 +35,7 @@
           </label>
           <label class="control-card"><span class="control-label">Training baseline</span><select id="training-profile"><option value="gl-late">Grand Live · late-run</option><option value="gl-summer">Grand Live · summer</option></select><span class="control-help">Base training values from Euophrys' Global scenario model.</span></label>
           <label class="control-card"><span class="control-label">Mood</span><select id="motivation"><option value="0.2">Great · +20%</option><option value="0.1">Good · +10%</option><option value="0">Normal · 0%</option><option value="-0.1">Bad · −10%</option><option value="-0.2">Awful · −20%</option></select><span class="control-help">Used in the same multiplicative form as the Euophrys calculator.</span></label>
-          <label class="control-card"><span class="control-label">Skill Point value</span><div class="number-with-unit"><input id="sp-weight" type="number" min="0" max="5" step="0.1" value="1" /><span>× stat</span></div><span class="control-help">Only changes the one-number ranking. The per-stat EV stays raw.</span></label>
+          <label class="control-card"><span class="control-label">Skill Point value</span><div class="number-with-unit"><input id="sp-weight" type="number" min="0" max="5" step="0.1" value="1" /><span>× stat</span></div><span class="control-help">Only changes one-number rankings. Per-stat output remains raw.</span></label>
         </div>
         <details class="advanced" id="advanced-settings"><summary>Advanced assumptions</summary><div class="advanced-grid"><div><div class="control-label">Uma growth bonuses</div><div class="growth-grid" id="growth-grid"></div></div><div><div class="control-label">Ranking metric</div><label class="radio-row"><input type="radio" name="rank-mode" value="specialty" checked /> Specialty EV <span>rainbow opportunity only</span></label><label class="radio-row"><input type="radio" name="rank-mode" value="all" /> All-placement EV <span>follow the card wherever it lands</span></label></div></div></details>
       </section>
@@ -48,14 +49,28 @@
       <section class="panel results-panel">
         <div class="panel-heading results-heading"><div><div class="section-kicker">3 · Output</div><h2>Placement-weighted comparison</h2></div><div class="formula-chip">EV = appearance × marginal training gain</div></div>
         <div id="results-empty" class="results-empty">Add at least one support card to see its output.</div>
-        <div id="results" hidden><div class="table-wrap"><table><thead><tr><th>#</th><th>Support</th><th>Spec priority</th><th>Specialty appearance</th><th>Rainbow marginal</th><th>Specialty EV</th><th>All-placement EV</th></tr></thead><tbody id="results-body"></tbody></table></div><div id="result-details" class="result-details"></div></div>
+        <div id="results" hidden>
+          <div class="table-wrap"><table><thead><tr><th>#</th><th>Support</th><th>Spec priority</th><th>Specialty appearance</th><th>Rainbow marginal</th><th>Specialty EV</th><th>All-placement EV</th></tr></thead><tbody id="results-body"></tbody></table></div>
+          <div id="result-details" class="result-details"></div>
+          <div id="career-results" class="career-section" hidden>
+            <div class="subsection-heading"><div><div class="section-kicker">Run projection</div><h3>Average training stats per Grand Live run</h3></div><div class="formula-chip">bond-aware · 56 training turns</div></div>
+            <div class="table-wrap career-table-wrap"><table class="career-table"><thead><tr><th>#</th><th>Support</th><th>Speed</th><th>Stamina</th><th>Power</th><th>Guts</th><th>Wit</th><th>SP</th><th>Total</th></tr></thead><tbody id="career-body"></tbody></table></div>
+            <p class="career-note">Training contribution only. Support-event bond affects when the card comes online; support-event stat rewards and race bonuses are intentionally excluded so this stays a training-output comparison.</p>
+          </div>
+        </div>
       </section>
 
-      <section class="method-card"><h3>What this number means</h3><p><strong>Specialty EV</strong> is the card's probability of landing on its preferred training multiplied by the card's marginal rainbow output there. <strong>All-placement EV</strong> also includes its non-rainbow marginal contribution on the other four trainings, under the simplifying assumption that you follow the card and click whichever room it occupies.</p><p>This is an isolated-card benchmark, not a full deck simulator. Multi-card friendship multiplication, bond timing, events, race bonuses, and your actual turn-selection policy can change real run value. Cards with context-dependent unique effects are flagged.</p></section>
+      <section class="method-card">
+        <h3>What these numbers mean</h3>
+        <p><strong>Specialty EV</strong> is the card's probability of landing on its preferred training multiplied by the card's marginal rainbow output there. <strong>All-placement EV</strong> also includes its non-rainbow marginal contribution on the other four trainings, under the simplifying assumption that you follow the card and click whichever room it occupies.</p>
+        <p><strong>Average training stats per run</strong> is career-aware. It follows Euophrys' Grand Live assumptions: 56 training turns, 20 average deck bond gained per turn, +20 global Specialty Priority by default, and a 1.4 scenario training multiplier. The five unknown deck slots are modeled with Euophrys' neutral 75-bond placeholders, so Starting Bond and support-event bond change when a card is expected to begin rainbowing.</p>
+        <p>This is still an isolated-card model rather than a full six-card simulator. Actual deck friendship multiplication, turn-selection policy, energy converting into extra actions, hints, scenario links, and context-dependent uniques can shift real results.</p>
+      </section>
     </main>
 
-    <footer>Support data and training-model conventions derived from <a href="https://github.com/Euophrys/umamusume-tierlist" target="_blank" rel="noreferrer">Euophrys/umamusume-tierlist</a>. Umamusume: Pretty Derby belongs to Cygames.</footer>
+    <footer>Support data, event bond data, and training-model conventions derived from <a href="https://github.com/Euophrys/umamusume-tierlist" target="_blank" rel="noreferrer">Euophrys/umamusume-tierlist</a>. Umamusume: Pretty Derby belongs to Cygames.</footer>
   </div>
   <script type="module" src="./app.mjs"></script>
+  <script type="module" src="./career.mjs"></script>
 </body>
 </html>
