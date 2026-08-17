@@ -33,8 +33,20 @@
     }
 
     .search-result .rarity-chip,
-    .selected-card .rarity-chip {
-      flex: 0 0 auto;
+    .selected-card .rarity-chip { flex: 0 0 auto; }
+
+    .controls-panel .control-grid { grid-template-columns: repeat(2, 1fr); }
+    .advanced-grid { grid-template-columns: 1.35fr 1fr 1fr; align-items: start; }
+    #results > .table-wrap table { min-width: 760px; }
+    .detail-ev-heading { margin-top: 16px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+    .detail-ev-heading strong { font-size: 12px; }
+    .detail-ev-heading span { color: var(--muted-2); font-size: 11px; }
+
+    @media (max-width: 900px) {
+      .advanced-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      .controls-panel .control-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -56,34 +68,46 @@
           <button class="ghost-button" id="reset-settings" type="button">Reset</button>
         </div>
         <div class="control-grid">
-          <label class="control-card accent-control">
-            <span class="control-label">Global Specialty Priority</span>
-            <div class="number-with-unit"><input id="global-spec" type="number" min="-100" max="300" step="1" value="20" /><span>得意率</span></div>
-            <input id="global-spec-range" type="range" min="0" max="100" step="1" value="20" />
-            <span class="control-help">Added to every card before unique Specialty multipliers. Grand Live default: +20.</span>
-            <div class="preset-row"><button type="button" class="mini-button" data-spec-preset="0">None +0</button><button type="button" class="mini-button active" data-spec-preset="20">Grand Live +20</button></div>
-          </label>
           <label class="control-card"><span class="control-label">Training baseline</span><select id="training-profile"><option value="gl-late">Grand Live · late-run</option><option value="gl-summer">Grand Live · summer</option></select><span class="control-help">Base training values from Euophrys' Global scenario model.</span></label>
           <label class="control-card"><span class="control-label">Mood</span><select id="motivation"><option value="0.2">Great · +20%</option><option value="0.1">Good · +10%</option><option value="0">Normal · 0%</option><option value="-0.1">Bad · −10%</option><option value="-0.2">Awful · −20%</option></select><span class="control-help">Used in the same multiplicative form as the Euophrys calculator.</span></label>
-          <label class="control-card"><span class="control-label">Skill Point value</span><div class="number-with-unit"><input id="sp-weight" type="number" min="0" max="5" step="0.1" value="1" /><span>× stat</span></div><span class="control-help">Only changes one-number rankings. Per-stat output remains raw.</span></label>
         </div>
-        <details class="advanced" id="advanced-settings"><summary>Advanced assumptions</summary><div class="advanced-grid"><div><div class="control-label">Uma growth bonuses</div><div class="growth-grid" id="growth-grid"></div></div><div><div class="control-label">Ranking metric</div><label class="radio-row"><input type="radio" name="rank-mode" value="specialty" checked /> Specialty EV <span>rainbow opportunity only</span></label><label class="radio-row"><input type="radio" name="rank-mode" value="all" /> All-placement EV <span>follow the card wherever it lands</span></label></div></div></details>
+        <details class="advanced" id="advanced-settings">
+          <summary>Advanced settings</summary>
+          <div class="advanced-grid">
+            <div>
+              <div class="control-label">Uma growth bonuses</div>
+              <div class="growth-grid" id="growth-grid"></div>
+            </div>
+            <label class="control-card">
+              <span class="control-label">Global Specialty Priority</span>
+              <div class="number-with-unit"><input id="global-spec" type="number" min="-100" max="300" step="1" value="0" /><span>得意率</span></div>
+              <input id="global-spec-range" type="range" min="0" max="100" step="1" value="0" />
+              <span class="control-help">Adds the same Specialty Priority to every card before card-specific multipliers. Leave at 0 unless a scenario or effect gives a global bonus.</span>
+              <div class="preset-row"><button type="button" class="mini-button active" data-spec-preset="0">None +0</button><button type="button" class="mini-button" data-spec-preset="20">+20</button></div>
+            </label>
+            <label class="control-card">
+              <span class="control-label">SP Stat value</span>
+              <div class="number-with-unit"><input id="sp-weight" type="number" min="0" max="5" step="0.1" value="1.2" /><span>× stat</span></div>
+              <span class="control-help">How much 1 Skill Point counts toward combined rankings and totals. At 1.2, 1 SP is valued as 1.2 stat points. Raw SP output is never changed.</span>
+            </label>
+          </div>
+        </details>
       </section>
 
       <section class="panel cards-panel">
         <div class="panel-heading"><div><div class="section-kicker">2 · Cards</div><h2>Pick supports to compare</h2></div><div class="count-badge"><span id="selected-count">0</span> / 10</div></div>
-        <div class="search-wrap"><input id="card-search" type="search" autocomplete="off" placeholder="Search character or support ID…" /><div id="search-results" class="search-results" hidden></div></div>
+        <div class="search-wrap"><input id="card-search" type="search" autocomplete="off" placeholder="Search title, character, or support ID…" /><div id="search-results" class="search-results" hidden></div></div>
         <div id="selected-cards" class="selected-cards empty-state">Search for a card above. Cards are loaded from Euophrys' Global support dataset and default to their highest available limit break.</div>
       </section>
 
       <section class="panel results-panel">
-        <div class="panel-heading results-heading"><div><div class="section-kicker">3 · Output</div><h2>Placement-weighted comparison</h2></div><div class="formula-chip">EV = appearance × marginal training gain</div></div>
+        <div class="panel-heading results-heading"><div><div class="section-kicker">3 · Output</div><h2>Placement-weighted comparison</h2></div><div class="formula-chip">Specialty EV = specialty rate × rainbow gain</div></div>
         <div id="results-empty" class="results-empty">Add at least one support card to see its output.</div>
         <div id="results" hidden>
-          <div class="table-wrap"><table><thead><tr><th>#</th><th>Support</th><th>Spec priority</th><th>Specialty appearance</th><th>Rainbow marginal</th><th>Specialty EV</th><th>All-placement EV</th></tr></thead><tbody id="results-body"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>#</th><th>Support</th><th>Specialty Priority</th><th>Specialty Rate</th><th>Rainbow Gain</th><th>Specialty EV</th></tr></thead><tbody id="results-body"></tbody></table></div>
           <div id="result-details" class="result-details"></div>
           <div id="career-results" class="career-section" hidden>
-            <div class="subsection-heading"><div><div class="section-kicker">Run projection</div><h3>Average training stats per Grand Live run</h3></div><div class="formula-chip">bond-aware · 56 training turns</div></div>
+            <div class="subsection-heading"><div><div class="section-kicker">Run projection</div><h3>Average training stats per run</h3></div><div class="formula-chip">bond-aware · 56 training turns</div></div>
             <div class="table-wrap career-table-wrap"><table class="career-table"><thead><tr><th>#</th><th>Support</th><th>Speed</th><th>Stamina</th><th>Power</th><th>Guts</th><th>Wit</th><th>SP</th><th>Total</th></tr></thead><tbody id="career-body"></tbody></table></div>
             <p class="career-note">Training contribution only. Support-event bond affects when the card comes online; support-event stat rewards and race bonuses are intentionally excluded so this stays a training-output comparison.</p>
           </div>
@@ -92,8 +116,9 @@
 
       <section class="method-card">
         <h3>What these numbers mean</h3>
-        <p><strong>Specialty EV</strong> is the card's probability of landing on its preferred training multiplied by the card's marginal rainbow output there. <strong>All-placement EV</strong> also includes its non-rainbow marginal contribution on the other four trainings, under the simplifying assumption that you follow the card and click whichever room it occupies.</p>
-        <p><strong>Average training stats per run</strong> is career-aware. It follows Euophrys' Grand Live assumptions: 56 training turns, 20 average deck bond gained per turn, +20 global Specialty Priority by default, and a 1.4 scenario training multiplier. The five unknown deck slots are modeled with Euophrys' neutral 75-bond placeholders, so Starting Bond and support-event bond change when a card is expected to begin rainbowing.</p>
+        <p><strong>Specialty Priority</strong> is the card's displayed 得意率. <strong>Specialty Rate</strong> is the calculated chance that the card appears on its preferred training. <strong>Rainbow Gain</strong> is the card's extra weighted stat contribution on a solo rainbow training compared with the same training without that card. <strong>Specialty EV</strong> combines the last two into an appearance-weighted expected contribution per turn.</p>
+        <p>The stat boxes directly below the comparison table are the selected card's <strong>per-turn Specialty EV broken out by stat</strong>. They are averages across all turns, so turns where the card does not appear are already represented.</p>
+        <p><strong>Average training stats per run</strong> is bond-aware. The current projection uses 56 training turns, 20 average deck bond gained per turn, the selected training baseline, and the existing scenario training multiplier. Starting Bond and support-event bond change when a card is expected to begin rainbowing.</p>
         <p>This is still an isolated-card model rather than a full six-card simulator. Actual deck friendship multiplication, turn-selection policy, energy converting into extra actions, hints, scenario links, and context-dependent uniques can shift real results.</p>
       </section>
     </main>
