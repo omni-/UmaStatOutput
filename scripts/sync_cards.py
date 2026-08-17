@@ -56,13 +56,13 @@ def extract_json_array(source: str):
     return data
 
 
-def extract_events(source: str):
+def extract_events(source: str, minimum_rows: int = 100):
     events = {}
     for card_id, raw_array in EVENT_RE.findall(source):
         values = json.loads(raw_array)
         if len(values) >= 8:
             events[int(card_id)] = values
-    if len(events) < 100:
+    if len(events) < minimum_rows:
         raise ValueError(f"Refusing suspiciously small event dataset ({len(events)} rows)")
     return events
 
@@ -207,7 +207,7 @@ def fetch_umapyoi_metadata(list_url: str, target_ids: set[int]):
     return titles, portraits
 
 
-def normalize(cards, events, titles, portraits):
+def normalize(cards, events, titles, portraits, minimum_rows: int = 100):
     result = []
     seen = set()
     for raw in cards:
@@ -230,7 +230,7 @@ def normalize(cards, events, titles, portraits):
         item["portrait_url"] = portraits.get(card_id, "")
         item["event_stats"] = events.get(card_id)
         result.append(item)
-    if len(result) < 100:
+    if len(result) < minimum_rows:
         raise ValueError(f"Refusing suspiciously small dataset ({len(result)} rows)")
     result.sort(key=lambda c: (c["id"], c["limit_break"]))
     return result

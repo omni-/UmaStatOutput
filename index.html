@@ -74,7 +74,7 @@
           <button class="ghost-button" id="reset-settings" type="button">Reset</button>
         </div>
         <div class="control-grid">
-          <label class="control-card"><span class="control-label">Training baseline</span><select id="training-profile"><option value="gl-late">Grand Live · late-run</option><option value="gl-summer">Grand Live · summer</option></select><span class="control-help">Base training values from Euophrys' Global scenario model.</span></label>
+          <label class="control-card"><span class="control-label">Per-click training baseline</span><select id="training-profile"><option value="gl-late">Grand Live · late-run</option><option value="gl-summer">Grand Live · summer</option></select><span class="control-help">Base training values for the per-click comparison from Euophrys' Global scenario model.</span></label>
           <label class="control-card"><span class="control-label">Mood</span><select id="motivation"><option value="0.2">Great · +20%</option><option value="0.1">Good · +10%</option><option value="0">Normal · 0%</option><option value="-0.1">Bad · −10%</option><option value="-0.2">Awful · −20%</option></select><span class="control-help">Used in the same multiplicative form as the Euophrys calculator.</span></label>
         </div>
         <details class="advanced" id="advanced-settings">
@@ -86,10 +86,10 @@
             </div>
             <label class="control-card">
               <span class="control-label">Global Specialty Priority</span>
-              <div class="number-with-unit"><input id="global-spec" type="number" min="-100" max="300" step="1" value="0" /><span>得意率</span></div>
-              <input id="global-spec-range" type="range" min="0" max="100" step="1" value="0" />
-              <span class="control-help">Adds the same Specialty Priority to every card before card-specific multipliers. Leave at 0 unless a scenario or effect gives a global bonus.</span>
-              <div class="preset-row"><button type="button" class="mini-button active" data-spec-preset="0">None +0</button><button type="button" class="mini-button" data-spec-preset="20">+20</button></div>
+              <div class="number-with-unit"><input id="global-spec" type="number" min="-100" max="300" step="1" value="20" /><span>得意率</span></div>
+              <input id="global-spec-range" type="range" min="0" max="100" step="1" value="20" />
+              <span class="control-help">Adds the same Specialty Priority to every card before card-specific multipliers. Grand Live defaults to +20.</span>
+              <div class="preset-row"><button type="button" class="mini-button" data-spec-preset="0">None +0</button><button type="button" class="mini-button active" data-spec-preset="20">Grand Live +20</button></div>
             </label>
             <label class="control-card">
               <span class="control-label">SP Stat value</span>
@@ -127,7 +127,7 @@
         <h3>What these numbers mean</h3>
         <p><strong>Specialty Priority</strong> is the card's displayed 得意率. <strong>Specialty Rate</strong> is the calculated chance that the card appears on its preferred training. <strong>Rainbow Gain</strong> is the card's extra weighted stat contribution on a solo rainbow training compared with the same training without that card. <strong>Specialty EV</strong> combines the last two into an appearance-weighted expected contribution per turn.</p>
         <p>The stat boxes directly below the comparison table are the selected card's <strong>per-turn Specialty EV broken out by stat</strong>. They are averages across all turns, so turns where the card does not appear are already represented.</p>
-        <p><strong>Average training stats per run</strong> is bond-aware. The current projection uses 56 training turns, 20 average deck bond gained per turn, the selected training baseline, and the existing scenario training multiplier. Starting Bond and support-event bond change when a card is expected to begin rainbowing.</p>
+        <p><strong>Average training stats per run</strong> is bond-aware. The per-click selector above affects only the comparison table; the run projection uses Grand Live's phase-specific unbonded and bonded training values across 56 training turns. Starting Bond and support-event bond change when a card is expected to begin rainbowing, and Grand Live's 1.4 multiplier applies only to own-specialty rainbow clicks.</p>
         <p>This is still an isolated-card model rather than a full six-card simulator. Actual deck friendship multiplication, turn-selection policy, energy converting into extra actions, hints, scenario links, and context-dependent uniques can shift real results.</p>
       </section>
     </main>

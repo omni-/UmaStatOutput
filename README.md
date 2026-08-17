@@ -15,7 +15,7 @@ For each selected five-training-type support card, the site reports:
 
 The default ranking is Specialty EV because it directly answers “how much expected rainbow training output does this card create after accounting for 得意率?”
 
-This is deliberately **not** a full career/deck simulator. Multi-card friendship multiplication, bond timing, support events, race bonuses, scenario-specific turn choice, and other cards' placement are outside the v1 model. Context-dependent unique effects are flagged in the UI rather than silently guessed.
+The bond-aware run projection estimates when each card begins rainbowing from Starting Bond and support-event bond. It is deliberately **not** a full career/deck simulator: multi-card friendship multiplication, support-event stat rewards, race bonuses, scenario-specific turn choice, and other cards' placement remain outside the model. Context-dependent unique effects are flagged in the UI rather than silently guessed.
 
 ## Data source
 
@@ -34,7 +34,7 @@ P(each off-type room) = 100 / same denominator
 P(no training) = 50 / same denominator
 ```
 
-Training output uses the same isolated-card multiplicative structure as Euophrys' calculator. Grand Live late-run and summer base training values are taken from its Global scenario configuration.
+Training output uses the same isolated-card multiplicative structure as Euophrys' calculator. Grand Live late-run and summer base training values, its +20 global Specialty Priority, and its rainbow-only 1.4 multiplier are taken from the Global scenario configuration.
 
 ## GitHub Pages
 
