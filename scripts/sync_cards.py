@@ -120,7 +120,7 @@ def chara_id_from_row(row):
 def fetch_text(url: str):
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "UmaStatOutput/1.3 (+https://github.com/omni-/UmaStatOutput)"},
+        headers={"User-Agent": "UmaStatOutput/1.4 (+https://github.com/omni-/UmaStatOutput)"},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return response.read().decode("utf-8")
@@ -130,36 +130,34 @@ def fetch_json(url: str):
     return json.loads(fetch_text(url))
 
 
-def extract_titles_from_file(source: str):
-    """Accept a local fixture/cache in either list or {id:title} form."""
+def extract_metadata_from_file(source: str):
     payload = json.loads(source)
     if isinstance(payload, dict) and all(str(k).isdigit() for k in payload):
-        return {int(k): clean_title(v) for k, v in payload.items() if clean_title(v)}
+        titles = {int(k): clean_title(v) for k, v in payload.items() if clean_title(v)}
+        return titles, {}
     titles = {}
+    portraits = {}
     for row in rows_from_payload(payload):
         card_id = id_from_row(row)
         title = title_from_row(row)
         if card_id is not None and title:
             titles[card_id] = title
-    return titles
+        portrait = str(row.get("portrait_url") or row.get("thumb_img") or "").strip() if isinstance(row, dict) else ""
+        if card_id is not None and portrait:
+            portraits[card_id] = portrait
+    return titles, portraits
 
 
-def fetch_umapyoi_titles(list_url: str, target_ids: set[int]):
-    """Enrich titles through Umapyoi without making metadata availability build-critical.
-
-    The list endpoint supplies IDs and character IDs. If it also contains titles, use them
-    immediately. Otherwise query per-character endpoints, which returns all support data for
-    that character. Any still-unmatched cards fall back to the documented per-card endpoint.
-    Requests are intentionally paced so the scheduled GitHub Action is polite to the API.
-    """
+def fetch_umapyoi_metadata(list_url: str, target_ids: set[int]):
     titles = {}
+    portraits = {}
+    card_to_chara = {}
     try:
         list_payload = fetch_json(list_url)
         list_rows = rows_from_payload(list_payload)
         if not list_rows:
             raise ValueError("support list contained no rows")
 
-        card_to_chara = {}
         for row in list_rows:
             card_id = id_from_row(row)
             if card_id is None or card_id not in target_ids:
@@ -171,22 +169,24 @@ def fetch_umapyoi_titles(list_url: str, target_ids: set[int]):
             if title:
                 titles[card_id] = title
 
+        api_root = list_url.rsplit("/support", 1)[0]
+        try:
+            character_rows = rows_from_payload(fetch_json(f"{api_root}/character/list"))
+            portraits_by_chara = {}
+            for row in character_rows:
+                chara_id = id_from_row(row)
+                if chara_id is None or not isinstance(row, dict):
+                    continue
+                portrait = str(row.get("thumb_img") or row.get("thumbImg") or "").strip()
+                if portrait:
+                    portraits_by_chara[chara_id] = portrait
+            for card_id, chara_id in card_to_chara.items():
+                if chara_id in portraits_by_chara:
+                    portraits[card_id] = portraits_by_chara[chara_id]
+        except Exception as exc:
+            print(f"WARN: Umapyoi portrait enrichment unavailable: {exc}", file=sys.stderr)
+
         base = list_url.rstrip("/")
-        missing = target_ids - titles.keys()
-        character_ids = sorted({card_to_chara[cid] for cid in missing if cid in card_to_chara})
-
-        for chara_id in character_ids:
-            try:
-                payload = fetch_json(f"{base}/character/{chara_id}")
-                for row in rows_from_payload(payload):
-                    card_id = id_from_row(row)
-                    title = title_from_row(row)
-                    if card_id in target_ids and title:
-                        titles[card_id] = title
-            except Exception as exc:  # Metadata enrichment must never break deployment.
-                print(f"WARN: Umapyoi character {chara_id} title lookup failed: {exc}", file=sys.stderr)
-            time.sleep(0.13)
-
         for card_id in sorted(target_ids - titles.keys()):
             try:
                 payload = fetch_json(f"{base}/{card_id}")
@@ -202,12 +202,12 @@ def fetch_umapyoi_titles(list_url: str, target_ids: set[int]):
                 print(f"WARN: Umapyoi support {card_id} title lookup failed: {exc}", file=sys.stderr)
             time.sleep(0.13)
     except Exception as exc:
-        print(f"WARN: Umapyoi title enrichment unavailable; deploying without titles: {exc}", file=sys.stderr)
+        print(f"WARN: Umapyoi metadata enrichment unavailable; deploying without it: {exc}", file=sys.stderr)
 
-    return titles
+    return titles, portraits
 
 
-def normalize(cards, events, titles):
+def normalize(cards, events, titles, portraits):
     result = []
     seen = set()
     for raw in cards:
@@ -225,8 +225,10 @@ def normalize(cards, events, titles):
         if key in seen:
             raise ValueError(f"Duplicate card/LB row: {key}")
         seen.add(key)
-        item["title"] = titles.get(int(item["id"]), "")
-        item["event_stats"] = events.get(int(item["id"]))
+        card_id = int(item["id"])
+        item["title"] = titles.get(card_id, "")
+        item["portrait_url"] = portraits.get(card_id, "")
+        item["event_stats"] = events.get(card_id)
         result.append(item)
     if len(result) < 100:
         raise ValueError(f"Refusing suspiciously small dataset ({len(result)} rows)")
@@ -246,52 +248,38 @@ def main():
     args = parser.parse_args()
 
     source = args.input.read_text(encoding="utf-8") if args.input else fetch_text(args.url)
-    event_source = (
-        args.events_input.read_text(encoding="utf-8")
-        if args.events_input
-        else fetch_text(args.events_url)
-    )
+    event_source = args.events_input.read_text(encoding="utf-8") if args.events_input else fetch_text(args.events_url)
     raw_cards = extract_json_array(source)
-    target_ids = {
-        int(card["id"])
-        for card in raw_cards
-        if not card.get("group") and card.get("type") in range(5)
-    }
+    target_ids = {int(card["id"]) for card in raw_cards if not card.get("group") and card.get("type") in range(5)}
     events = extract_events(event_source)
 
     if args.titles_input:
-        titles = extract_titles_from_file(args.titles_input.read_text(encoding="utf-8"))
+        titles, portraits = extract_metadata_from_file(args.titles_input.read_text(encoding="utf-8"))
     else:
-        titles = fetch_umapyoi_titles(args.titles_url, target_ids)
+        titles, portraits = fetch_umapyoi_metadata(args.titles_url, target_ids)
 
-    cards = normalize(raw_cards, events, titles)
+    cards = normalize(raw_cards, events, titles, portraits)
     unique_cards = len({c["id"] for c in cards})
     titled_cards = len({c["id"] for c in cards if c["title"]})
+    portrait_cards = len({c["id"] for c in cards if c["portrait_url"]})
     if titled_cards < unique_cards:
-        print(
-            f"WARN: title metadata available for {titled_cards}/{unique_cards} Global supports; "
-            "untitled cards will fall back to character/type/ID search.",
-            file=sys.stderr,
-        )
+        print(f"WARN: title metadata available for {titled_cards}/{unique_cards} Global supports.", file=sys.stderr)
+    if portrait_cards < unique_cards:
+        print(f"WARN: portrait metadata available for {portrait_cards}/{unique_cards} Global supports; missing portraits fall back to card art.", file=sys.stderr)
 
     payload = {
-        "sources": {"cards": args.url, "events": args.events_url, "titles": args.titles_url},
+        "sources": {"cards": args.url, "events": args.events_url, "metadata": args.titles_url},
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "card_count": unique_cards,
         "row_count": len(cards),
         "event_count": len(events),
         "title_count": titled_cards,
+        "portrait_count": portrait_cards,
         "cards": cards,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        encoding="utf-8",
-    )
-    print(
-        f"Wrote {len(cards)} card/LB rows ({unique_cards} unique supports; "
-        f"{len(events)} event rows; {titled_cards} titled supports) to {args.output}"
-    )
+    args.output.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    print(f"Wrote {len(cards)} card/LB rows ({unique_cards} unique supports; {len(events)} event rows; {titled_cards} titles; {portrait_cards} portraits) to {args.output}")
     return 0
 
 

@@ -41,6 +41,12 @@
     .detail-ev-heading { margin-top: 16px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
     .detail-ev-heading strong { font-size: 12px; }
     .detail-ev-heading span { color: var(--muted-2); font-size: 11px; }
+    .cards-panel .panel-heading { margin-bottom: 14px; }
+    .card-heading-actions { display: flex; align-items: center; gap: 8px; }
+    .portrait-card-thumb { overflow: hidden; }
+    .portrait-card-thumb .portrait-thumb { width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
+    .career-support { display: flex; align-items: center; gap: 10px; min-width: 255px; }
+    .career-support-copy { min-width: 0; }
 
     @media (max-width: 900px) {
       .advanced-grid { grid-template-columns: 1fr; }
@@ -95,7 +101,10 @@
       </section>
 
       <section class="panel cards-panel">
-        <div class="panel-heading"><div><div class="section-kicker">2 · Cards</div><h2>Pick supports to compare</h2></div><div class="count-badge"><span id="selected-count">0</span> / 10</div></div>
+        <div class="panel-heading">
+          <div><div class="section-kicker">2 · Cards</div><h2>Pick supports to compare</h2></div>
+          <div class="card-heading-actions"><button class="ghost-button" id="reset-cards" type="button">Reset</button><div class="count-badge"><span id="selected-count">0</span> / 10</div></div>
+        </div>
         <div class="search-wrap"><input id="card-search" type="search" autocomplete="off" placeholder="Search title, character, or support ID…" /><div id="search-results" class="search-results" hidden></div></div>
         <div id="selected-cards" class="selected-cards empty-state">Search for a card above. Cards are loaded from Euophrys' Global support dataset and default to their highest available limit break.</div>
       </section>
@@ -123,7 +132,7 @@
       </section>
     </main>
 
-    <footer>Support data, event bond data, and training-model conventions derived from <a href="https://github.com/Euophrys/umamusume-tierlist" target="_blank" rel="noreferrer">Euophrys/umamusume-tierlist</a>. Umamusume: Pretty Derby belongs to Cygames.</footer>
+    <footer>Support data, event bond data, and training-model conventions derived from <a href="https://github.com/Euophrys/umamusume-tierlist" target="_blank" rel="noreferrer">Euophrys/umamusume-tierlist</a>. Character portrait metadata from <a href="https://umapyoi.net/" target="_blank" rel="noreferrer">Umapyoi</a>. Umamusume: Pretty Derby belongs to Cygames.</footer>
   </div>
   <script type="module" src="./app.mjs"></script>
   <script type="module" src="./career.mjs"></script>
