@@ -9,14 +9,17 @@
   <link rel="stylesheet" href="./career.css" />
   <style>
     /* Keep card copy aligned even when support titles have different lengths. */
+    .search-result > div:nth-child(2),
+    .selected-card > div:nth-child(2) {
+      align-self: start;
+    }
+
     .search-result .search-titleline,
     .selected-card .card-titleline {
-      display: -webkit-box;
+      display: block;
       height: 2.5em;
       line-height: 1.25;
       overflow: hidden;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2;
     }
 
     .search-result .name-row,
