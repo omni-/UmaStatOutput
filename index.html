@@ -8,18 +8,14 @@
   <link rel="stylesheet" href="./styles.css" />
   <link rel="stylesheet" href="./career.css" />
   <style>
-    /* Keep card copy aligned even when support titles have different lengths. */
-    .search-result > div:nth-child(2),
-    .selected-card > div:nth-child(2) {
-      align-self: start;
-    }
-
+    /* Keep card copy aligned while letting one-line titles sit close to the Uma name. */
     .search-result .search-titleline,
     .selected-card .card-titleline {
-      display: block;
       height: 2.5em;
       line-height: 1.25;
       overflow: hidden;
+      display: flex;
+      align-items: flex-end;
     }
 
     .search-result .name-row,
