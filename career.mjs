@@ -2,16 +2,21 @@ import {
   calculateAppearance,
   calculateMarginalTraining,
   weightedSum,
+  averageFacilityLevel,
+  hasFacilityLevelUnique,
+  turnsPerFacilityLevel,
   RARITY_NAMES,
   TYPE_NAMES,
+  TRAINING_PROFILES,
   portraitImageUrl,
   supportImageUrl,
 } from "./app.mjs";
+
 export const GRAND_LIVE_RUN = {
+  label: "Grand Live",
   trainingTurns: 56,
   bondPerTurn: 20,
   deckBondTarget: 75 * 6,
-  globalSpecialty: 20,
   scenarioMultiplier: 1.4,
   unbondedGains: [
     [8, 0, 4, 0, 0, 2],
@@ -28,26 +33,58 @@ export const GRAND_LIVE_RUN = {
     [3, 0, 0, 0, 9, 3],
   ],
 };
+
+export const UNITY_CUP_RUN = {
+  label: "Unity Cup",
+  trainingTurns: 56,
+  bondPerTurn: 20,
+  deckBondTarget: 75 * 6,
+  scenarioMultiplier: 1,
+  unbondedGains: [
+    [8, 0, 4, 0, 0, 4],
+    [0, 8, 0, 6, 0, 4],
+    [0, 4, 9, 0, 0, 4],
+    [3, 0, 3, 6, 0, 4],
+    [2, 0, 0, 0, 6, 5],
+  ],
+  bondedGains: [
+    [12, 0, 5, 0, 0, 4],
+    [0, 12, 0, 7, 0, 4],
+    [0, 5, 13, 0, 0, 4],
+    [4, 0, 3, 10, 0, 4],
+    [3, 0, 0, 0, 10, 5],
+  ],
+};
+
+export const RUN_PROFILES = {
+  "gl-late": GRAND_LIVE_RUN,
+  "gl-summer": GRAND_LIVE_RUN,
+  "unity-late": UNITY_CUP_RUN,
+};
+
 function eventInfo(card) {
   if (Array.isArray(card.event_stats) && card.event_stats.length >= 8)
     return {
       bond: Number(card.event_stats[7] || 0),
       source: "upstream event data",
     };
-  if (Number(card.rarity) >= 2) return { bond: 5, source: "rarity fallback" };
+  if (Number(card.rarity) >= 2)
+    return { bond: 5, source: "rarity fallback" };
   return { bond: 0, source: "no event estimate" };
 }
+
 function adjustedForRamp(card, rainbowClicks) {
   const adjusted = {
-      ...card,
-      stat_bonus: [...(card.stat_bonus || [0, 0, 0, 0, 0, 0])],
-      fs_stats: [...(card.fs_stats || [0, 0, 0, 0, 0, 0])],
-    },
-    step = Number(card.fs_ramp?.[0] || 0),
-    cap = Number(card.fs_ramp?.[1] || 0);
+    ...card,
+    stat_bonus: [...(card.stat_bonus || [0, 0, 0, 0, 0, 0])],
+    fs_stats: [...(card.fs_stats || [0, 0, 0, 0, 0, 0])],
+  };
+  const step = Number(card.fs_ramp?.[0] || 0);
+  const cap = Number(card.fs_ramp?.[1] || 0);
   if (step <= 0 || cap <= 0 || rainbowClicks <= 0) return adjusted;
-  let current = 0,
-    total = 0;
+
+  let current = 0;
+  let total = 0;
   for (let remaining = rainbowClicks * 0.66; remaining > 0; remaining--) {
     total += current;
     current = Math.min(current + step, cap);
@@ -55,33 +92,43 @@ function adjustedForRamp(card, rainbowClicks) {
   adjusted.unique_fs_bonus = 1 + total / rainbowClicks / 100;
   return adjusted;
 }
+
 function addScaled(target, values, scale) {
-  for (let i = 0; i < 6; i++) target[i] += Number(values[i] || 0) * scale;
+  for (let i = 0; i < 6; i++)
+    target[i] += Number(values[i] || 0) * scale;
 }
+
 export function calculateCareerProjection(card, options = {}) {
+  const profileKey =
+    options.profile && RUN_PROFILES[options.profile]
+      ? options.profile
+      : "gl-late";
+  const run = RUN_PROFILES[profileKey];
+  const profile = TRAINING_PROFILES[profileKey] || TRAINING_PROFILES["gl-late"];
   const globalSpecialty = Number(
-      options.globalSpecialty ?? GRAND_LIVE_RUN.globalSpecialty,
-    ),
-    motivation = Number(options.motivation ?? 0.2),
-    growth = options.growth || [1, 1, 1, 1, 1, 1],
-    spWeight = Number(options.spWeight ?? 1.2),
-    appearance = calculateAppearance(card, globalSpecialty),
-    event = eventInfo(card),
-    bondNeeded = Math.max(
-      0,
-      GRAND_LIVE_RUN.deckBondTarget - Number(card.sb || 0) - event.bond,
-    ),
-    daysToBond = Math.min(
-      GRAND_LIVE_RUN.trainingTurns,
-      bondNeeded / GRAND_LIVE_RUN.bondPerTurn,
-    ),
-    rainbowDays = Math.max(0, GRAND_LIVE_RUN.trainingTurns - daysToBond),
-    offDenominator = Math.max(
-      1,
-      Number(card.offstat_appearance_denominator || 4),
-    ),
-    beforeClicks = new Array(5).fill(0),
-    afterClicks = new Array(5).fill(0);
+    options.globalSpecialty ?? profile.globalSpecialty,
+  );
+  const motivation = Number(options.motivation ?? 0.2);
+  const growth = options.growth || [1, 1, 1, 1, 1, 1];
+  const spWeight = Number(options.spWeight ?? profile.spWeight ?? 1.2);
+  const facilityPace = Number(
+    options.facilityPace ?? profile.facilityPace ?? 100,
+  );
+  const appearance = calculateAppearance(card, globalSpecialty);
+  const event = eventInfo(card);
+  const bondNeeded = Math.max(
+    0,
+    run.deckBondTarget - Number(card.sb || 0) - event.bond,
+  );
+  const daysToBond = Math.min(run.trainingTurns, bondNeeded / run.bondPerTurn);
+  const rainbowDays = Math.max(0, run.trainingTurns - daysToBond);
+  const offDenominator = Math.max(
+    1,
+    Number(card.offstat_appearance_denominator || 4),
+  );
+  const beforeClicks = new Array(5).fill(0);
+  const afterClicks = new Array(5).fill(0);
+
   for (let training = 0; training < 5; training++) {
     if (training === card.type) {
       beforeClicks[training] = appearance.specialty * daysToBond;
@@ -92,27 +139,38 @@ export function calculateCareerProjection(card, options = {}) {
       afterClicks[training] = chosenRate * rainbowDays;
     }
   }
-  const rainbowClicks = afterClicks[card.type],
-    adjusted = adjustedForRamp(card, rainbowClicks),
-    vector = new Array(6).fill(0);
+
+  const rainbowClicks = afterClicks[card.type];
+  const adjusted = adjustedForRamp(card, rainbowClicks);
+  const beforeFacilityLevel = averageFacilityLevel(0, daysToBond, facilityPace);
+  const afterFacilityLevel = averageFacilityLevel(
+    daysToBond,
+    run.trainingTurns,
+    facilityPace,
+  );
+  const vector = new Array(6).fill(0);
+
   for (let training = 0; training < 5; training++) {
     const before = calculateMarginalTraining(adjusted, training, {
-      gains: GRAND_LIVE_RUN.unbondedGains[training],
+      gains: run.unbondedGains[training],
       motivation,
       growth,
       rainbow: false,
+      facilityLevel: beforeFacilityLevel,
     });
     addScaled(vector, before, beforeClicks[training]);
+
     const after = calculateMarginalTraining(adjusted, training, {
-        gains: GRAND_LIVE_RUN.bondedGains[training],
-        motivation,
-        growth,
-        rainbow: training === card.type,
-      }),
-      scenarioScale =
-        training === card.type ? GRAND_LIVE_RUN.scenarioMultiplier : 1;
+      gains: run.bondedGains[training],
+      motivation,
+      growth,
+      rainbow: training === card.type,
+      facilityLevel: afterFacilityLevel,
+    });
+    const scenarioScale = training === card.type ? run.scenarioMultiplier : 1;
     addScaled(vector, after, afterClicks[training] * scenarioScale);
   }
+
   return {
     vector,
     score: weightedSum(vector, spWeight),
@@ -121,8 +179,15 @@ export function calculateCareerProjection(card, options = {}) {
     rainbowClicks,
     appearance,
     eventSource: event.source,
+    profileKey,
+    runLabel: run.label,
+    facilityPace,
+    turnsPerFacilityLevel: turnsPerFacilityLevel(facilityPace),
+    beforeFacilityLevel,
+    afterFacilityLevel,
   };
 }
+
 function esc(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -131,6 +196,7 @@ function esc(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
 function lbLabel(lb) {
   return Number(lb) === 4 ? "MLB" : `LB${lb}`;
 }
@@ -145,12 +211,15 @@ function title(card) {
 function portrait(card) {
   return `<div class="accent-card-thumb small portrait-card-thumb"><img class="card-thumb portrait-thumb" src="${esc(portraitImageUrl(card))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${esc(supportImageUrl(card.id))}'" /></div>`;
 }
+
 function initCareerView() {
-  const body = document.querySelector("#career-body"),
-    wrap = document.querySelector("#career-results"),
-    selectedRoot = document.querySelector("#selected-cards");
+  const body = document.querySelector("#career-body");
+  const wrap = document.querySelector("#career-results");
+  const selectedRoot = document.querySelector("#selected-cards");
   if (!body || !wrap || !selectedRoot) return;
+
   let payload = null;
+
   function readSettings() {
     const growth = [0, 1, 2, 3, 4].map(
       (i) =>
@@ -161,17 +230,22 @@ function initCareerView() {
       globalSpecialty: Number(
         document.querySelector("#global-spec")?.value || 0,
       ),
+      profile: document.querySelector("#training-profile")?.value || "gl-late",
       motivation: Number(document.querySelector("#motivation")?.value ?? 0.2),
       spWeight: Number(document.querySelector("#sp-weight")?.value ?? 1.2),
+      facilityPace: Number(
+        document.querySelector("#facility-pace")?.value ?? 100,
+      ),
       growth,
     };
   }
+
   function selectedCards() {
     if (!payload) return [];
     const byIdLb = new Map(
-        payload.cards.map((card) => [`${card.id}:${card.limit_break}`, card]),
-      ),
-      cards = [];
+      payload.cards.map((card) => [`${card.id}:${card.limit_break}`, card]),
+    );
+    const cards = [];
     selectedRoot.querySelectorAll("select[data-lb-id]").forEach((select) => {
       const card = byIdLb.get(
         `${Number(select.dataset.lbId)}:${Number(select.value)}`,
@@ -180,6 +254,7 @@ function initCareerView() {
     });
     return cards;
   }
+
   function render() {
     const cards = selectedCards();
     if (!cards.length) {
@@ -187,27 +262,32 @@ function initCareerView() {
       body.innerHTML = "";
       return;
     }
-    const options = readSettings(),
-      rows = cards
-        .map((card) => ({
-          card,
-          career: calculateCareerProjection(card, options),
-        }))
-        .sort((a, b) => b.career.score - a.career.score);
+
+    const options = readSettings();
+    const rows = cards
+      .map((card) => ({
+        card,
+        career: calculateCareerProjection(card, options),
+      }))
+      .sort((a, b) => b.career.score - a.career.score);
+
     body.innerHTML = rows
       .map((row, index) => {
-        const { card, career } = row,
-          stats = career.vector
-            .map(
-              (value) =>
-                `<td><strong>${Number(value).toFixed(1)}</strong></td>`,
-            )
-            .join("");
-        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · bond phase ≈ ${career.daysToBond.toFixed(1)} turns · rainbows ≈ ${career.rainbowClicks.toFixed(1)}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
+        const { card, career } = row;
+        const stats = career.vector
+          .map(
+            (value) => `<td><strong>${Number(value).toFixed(1)}</strong></td>`,
+          )
+          .join("");
+        const facilityMeta = hasFacilityLevelUnique(card)
+          ? ` · facility ≈ Lv${career.beforeFacilityLevel.toFixed(1)} → Lv${career.afterFacilityLevel.toFixed(1)}`
+          : "";
+        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · ${career.runLabel} · bond phase ≈ ${career.daysToBond.toFixed(1)} turns · rainbows ≈ ${career.rainbowClicks.toFixed(1)}${facilityMeta}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
       })
       .join("");
     wrap.hidden = false;
   }
+
   fetch("./data/cards.json", { cache: "no-cache" })
     .then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -225,8 +305,10 @@ function initCareerView() {
       [
         "#global-spec",
         "#global-spec-range",
+        "#training-profile",
         "#motivation",
         "#sp-weight",
+        "#facility-pace",
         "#growth-grid",
       ].forEach((selector) => {
         const el = document.querySelector(selector);
@@ -250,4 +332,5 @@ function initCareerView() {
       body.innerHTML = `<tr><td colspan="9" class="career-error">Career projection data failed to load.</td></tr>`;
     });
 }
+
 if (typeof document !== "undefined") initCareerView();

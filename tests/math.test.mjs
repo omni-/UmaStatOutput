@@ -1,11 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  TRAINING_PROFILES,
+  averageFacilityLevel,
   calculateAppearance,
   calculateCardEV,
   calculateMarginalTraining,
+  facilityLevelAtTurn,
+  facilityTrainingBonus,
+  turnsPerFacilityLevel,
 } from "../app.mjs";
-import { GRAND_LIVE_RUN, calculateCareerProjection } from "../career.mjs";
+import {
+  GRAND_LIVE_RUN,
+  UNITY_CUP_RUN,
+  calculateCareerProjection,
+} from "../career.mjs";
+
 const card = {
   id: 99999,
   type: 0,
@@ -26,31 +36,47 @@ const card = {
   offstat_appearance_denominator: 4,
   event_stats: [20, 0, 10, 0, 0, 30, 0, 10],
 };
+
 test("appearance formula reproduces Euophrys Kitasan example", () => {
   const r = calculateAppearance(card, 0);
   assert.equal(r.specialtyWeight, 216);
   assert.ok(Math.abs(r.specialty - 216 / 666) < 1e-12);
 });
+
 test("Grand Live +20 appearance rate is numerically pinned", () => {
   const r = calculateAppearance(card, 20);
   assert.equal(r.specialtyWeight, 240);
   assert.equal(r.denominator, 690);
   assert.ok(Math.abs(r.specialty - 8 / 23) < 1e-12);
 });
+
 test("Grand Live profile defaults to +20 Specialty Priority", () => {
   const r = calculateCardEV(card);
   assert.ok(Math.abs(r.appearance.specialty - 8 / 23) < 1e-12);
 });
+
+test("Unity Cup late-run preset uses requested environment defaults", () => {
+  const profile = TRAINING_PROFILES["unity-late"];
+  assert.equal(profile.globalSpecialty, 0);
+  assert.equal(profile.spWeight, 1);
+  assert.equal(profile.facilityLevel, 5);
+  assert.equal(profile.facilityPace, 50);
+  assert.deepEqual(profile.gains[0], [12, 0, 5, 0, 0, 4]);
+  assert.ok(profile.facilityPace < TRAINING_PROFILES["gl-late"].facilityPace);
+});
+
 test("global specialty priority raises preferred appearance and lowers each off-type appearance", () => {
-  const a = calculateAppearance(card, 0),
-    b = calculateAppearance(card, 20);
+  const a = calculateAppearance(card, 0);
+  const b = calculateAppearance(card, 20);
   assert.ok(b.specialty > a.specialty);
   assert.ok(b.eachOff < a.eachOff);
 });
+
 test("appearance probabilities sum to one", () => {
   const r = calculateAppearance(card, 20);
   assert.ok(Math.abs(r.specialty + r.eachOff * 4 + r.none - 1) < 1e-12);
 });
+
 test("card EV returns positive specialty output", () => {
   const r = calculateCardEV(card, {
     globalSpecialty: 20,
@@ -58,10 +84,12 @@ test("card EV returns positive specialty output", () => {
     motivation: 0.2,
     growth: [1, 1, 1, 1, 1, 1],
     spWeight: 1,
+    facilityLevel: 5,
   });
   assert.ok(r.rainbowScore > 0);
   assert.ok(r.allPlacementScore >= r.specialtyScore);
 });
+
 test("known rainbow marginal vector is numerically pinned", () => {
   const vector = calculateMarginalTraining(card, 0, {
     gains: [11, 0, 5, 0, 0, 2],
@@ -74,6 +102,7 @@ test("known rainbow marginal vector is numerically pinned", () => {
     [10.90888, 0, 4.1287, 0, 0, 1.65148],
   );
 });
+
 test("known pre-bond marginal vector is numerically pinned", () => {
   const vector = calculateMarginalTraining(card, 0, {
     gains: GRAND_LIVE_RUN.unbondedGains[0],
@@ -86,6 +115,43 @@ test("known pre-bond marginal vector is numerically pinned", () => {
     [5.69305, 0, 2.0858, 0, 0, 1.0429],
   );
 });
+
+test("Maruzensky facility unique replaces Euophrys' baked Lv3 approximation", () => {
+  const smaru = { ...card, id: 30107, tb: 1.15 };
+  assert.ok(Math.abs(facilityTrainingBonus(smaru, 1) - 1.05) < 1e-12);
+  assert.ok(Math.abs(facilityTrainingBonus(smaru, 3) - 1.15) < 1e-12);
+  assert.ok(Math.abs(facilityTrainingBonus(smaru, 5) - 1.25) < 1e-12);
+
+  const lv3 = calculateCardEV(smaru, {
+    profile: "gl-late",
+    facilityLevel: 3,
+  });
+  const lv5 = calculateCardEV(smaru, {
+    profile: "gl-late",
+    facilityLevel: 5,
+  });
+  assert.ok(lv5.rainbowScore > lv3.rainbowScore);
+  assert.ok(lv5.specialtyScore > lv3.specialtyScore);
+});
+
+test("Grand Live facility pace reaches Lv5 around turn 32", () => {
+  assert.equal(turnsPerFacilityLevel(100), 8);
+  assert.equal(facilityLevelAtTurn(0, 100), 1);
+  assert.equal(facilityLevelAtTurn(7.99, 100), 1);
+  assert.equal(facilityLevelAtTurn(8, 100), 2);
+  assert.equal(facilityLevelAtTurn(24, 100), 4);
+  assert.equal(facilityLevelAtTurn(32, 100), 5);
+  assert.ok(averageFacilityLevel(0, 56, 100) > 3);
+});
+
+test("Unity Cup facility pace is materially slower", () => {
+  assert.equal(turnsPerFacilityLevel(50), 16);
+  assert.equal(facilityLevelAtTurn(16, 50), 2);
+  assert.equal(facilityLevelAtTurn(32, 50), 3);
+  assert.equal(facilityLevelAtTurn(48, 50), 4);
+  assert.equal(facilityLevelAtTurn(56, 50), 4);
+});
+
 test("career projection splits Grand Live into bond and rainbow phases", () => {
   const r = calculateCareerProjection(card, { globalSpecialty: 20 });
   assert.equal(r.daysToBond + r.rainbowDays, GRAND_LIVE_RUN.trainingTurns);
@@ -93,6 +159,7 @@ test("career projection splits Grand Live into bond and rainbow phases", () => {
   assert.ok(r.rainbowClicks > 0);
   assert.ok(r.vector.some((v) => v > 0));
 });
+
 test("starting and event bond bring a card online earlier", () => {
   const low = calculateCareerProjection({
     ...card,
@@ -107,6 +174,7 @@ test("starting and event bond bring a card online earlier", () => {
   assert.ok(high.daysToBond < low.daysToBond);
   assert.ok(high.rainbowDays > low.rainbowDays);
 });
+
 test("bond timing and whole-run output are numerically pinned", () => {
   const r = calculateCareerProjection(card, {
     globalSpecialty: 20,
@@ -120,9 +188,47 @@ test("bond timing and whole-run output are numerically pinned", () => {
   assert.deepEqual(
     r.vector.map((value) => Number(value.toFixed(9))),
     [
-      241.7651615, 13.371602808, 98.880157011, 15.780475091, 8.374373641,
+      241.7651615,
+      13.371602808,
+      98.880157011,
+      15.780475091,
+      8.374373641,
       45.617886609,
     ],
   );
   assert.ok(Math.abs(r.score - 423.78965665942025) < 1e-12);
+});
+
+test("faster facility progression raises Maruzensky whole-run output", () => {
+  const smaru = {
+    ...card,
+    id: 30107,
+    tb: 1.15,
+    unique_specialty: 1,
+    specialty_rate: 35,
+  };
+  const slow = calculateCareerProjection(smaru, {
+    profile: "gl-late",
+    facilityPace: 50,
+  });
+  const fast = calculateCareerProjection(smaru, {
+    profile: "gl-late",
+    facilityPace: 100,
+  });
+  assert.ok(fast.score > slow.score);
+  assert.ok(fast.afterFacilityLevel > slow.afterFacilityLevel);
+});
+
+test("Unity Cup career projection uses Unity Cup run values", () => {
+  const r = calculateCareerProjection(card, {
+    profile: "unity-late",
+    globalSpecialty: 0,
+    spWeight: 1,
+    facilityPace: 50,
+  });
+  assert.equal(r.profileKey, "unity-late");
+  assert.equal(r.runLabel, "Unity Cup");
+  assert.equal(r.turnsPerFacilityLevel, 16);
+  assert.equal(UNITY_CUP_RUN.scenarioMultiplier, 1);
+  assert.deepEqual(UNITY_CUP_RUN.bondedGains[0], [12, 0, 5, 0, 0, 4]);
 });
