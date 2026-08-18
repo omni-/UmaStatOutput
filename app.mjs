@@ -1,6 +1,7 @@
 export const STAT_NAMES = ["Speed", "Stamina", "Power", "Guts", "Wit", "SP"];
 export const TYPE_NAMES = ["Speed", "Stamina", "Power", "Guts", "Wit"];
 export const RARITY_NAMES = { 1: "R", 2: "SR", 3: "SSR" };
+export const GLOBAL_UNIQUE_COVERAGE = "Grand Concert / 1.5 Anniversary";
 
 export const TRAINING_PROFILES = {
   "gl-late": {
@@ -54,6 +55,45 @@ const NO_TRAINING_WEIGHT = 50;
 const SUPPORT_COUNT_BONUS = 0.05;
 const STORAGE_KEY = "uma-stat-output:v1";
 
+// Benchmark context for Global conditional uniques. These are explicit rather
+// than hidden inside per-card constants so the model has one place to evolve
+// when scenario-specific context controls are added.
+export const GLOBAL_UNIQUE_CONTEXT = {
+  bond: 80,
+  deckTypes: 5,
+  fans: 200000,
+  currentEnergy: 50,
+  maxEnergy: 100,
+  totalBond: 450,
+  supportsOnTraining: 1,
+  friendshipTrainings: 5,
+};
+
+// Dynamic uniques available on Global through Grand Concert / 1.5 Anniversary.
+// Euophrys preserves some directly and flattens others to representative values;
+// this table replaces those approximations with the actual conditional formula.
+const GLOBAL_DYNAMIC_UNIQUES = {
+  30083: { kind: "off-specialty-bond", bond: 80, training: 0.2 },
+  30085: { kind: "deck-types", threshold: 5, training: 0.15 },
+  30086: { kind: "fans", fansPerPoint: 10000, maxPoints: 20 },
+  30088: { kind: "deck-types", threshold: 4, training: 0.1 },
+  30091: { kind: "friendship-ramp", step: 3, cap: 15 },
+  30094: { kind: "energy-friendship", baked: 0.07 },
+  30095: { kind: "max-energy-training", baked: 0.12 },
+  30099: { kind: "total-bond-training", baked: 0.15 },
+  30102: { kind: "supports-on-training", trainingPerSupport: 0.05 },
+};
+
+// These Global uniques affect dimensions that this calculator intentionally does
+// not score yet. Keep them visibly marked rather than silently pretending their
+// value is represented in training-output EV.
+const UNSUPPORTED_GLOBAL_UNIQUES = {
+  30090: "deck-composition initial stats are outside the training-output metric",
+  30097: "deck-composition initial stats are outside the training-output metric",
+  30098: "deck-composition initial stats are outside the training-output metric",
+  30108: "failure-protection value is outside the current training-output model",
+};
+
 // Euophrys currently flattens Maruzensky 30107's facility-level unique into a
 // fixed +15% Training Effectiveness (equivalent to facility Lv3). Keep the
 // upstream number as the baseline, then replace only that baked approximation
@@ -64,6 +104,25 @@ const FACILITY_LEVEL_TRAINING_UNIQUES = {
 
 function clampFacilityLevel(value) {
   return Math.max(1, Math.min(5, Number(value) || 1));
+}
+
+function uniqueContext(options = {}) {
+  return {
+    bond: Number(options.bond ?? GLOBAL_UNIQUE_CONTEXT.bond),
+    deckTypes: Number(options.deckTypes ?? GLOBAL_UNIQUE_CONTEXT.deckTypes),
+    fans: Number(options.fans ?? GLOBAL_UNIQUE_CONTEXT.fans),
+    currentEnergy: Number(
+      options.currentEnergy ?? GLOBAL_UNIQUE_CONTEXT.currentEnergy,
+    ),
+    maxEnergy: Number(options.maxEnergy ?? GLOBAL_UNIQUE_CONTEXT.maxEnergy),
+    totalBond: Number(options.totalBond ?? GLOBAL_UNIQUE_CONTEXT.totalBond),
+    supportsOnTraining: Number(
+      options.supportsOnTraining ?? GLOBAL_UNIQUE_CONTEXT.supportsOnTraining,
+    ),
+    friendshipTrainings: Number(
+      options.friendshipTrainings ?? GLOBAL_UNIQUE_CONTEXT.friendshipTrainings,
+    ),
+  };
 }
 
 export function hasFacilityLevelUnique(card) {
@@ -79,6 +138,75 @@ export function facilityTrainingBonus(card, facilityLevel = 3) {
     (clampFacilityLevel(facilityLevel) - unique.bakedLevel) *
       unique.trainingBonusPerLevel
   );
+}
+
+export function globalUniqueModifiers(card, trainingType, options = {}) {
+  const unique = GLOBAL_DYNAMIC_UNIQUES[Number(card?.id)];
+  const context = uniqueContext(options);
+  const rainbow = Boolean(options.rainbow);
+  let trainingDelta = 0;
+  let friendshipMultiplier = Number(card.unique_fs_bonus || 1);
+  if (!unique) return { trainingDelta, friendshipMultiplier, context };
+
+  switch (unique.kind) {
+    case "off-specialty-bond":
+      // The snapshot benchmark is bonded. Career callers can pass bond explicitly
+      // once bond phase is being evaluated per click.
+      if (
+        context.bond >= unique.bond &&
+        Number(trainingType) !== Number(card.type)
+      )
+        trainingDelta += unique.training;
+      break;
+    case "deck-types":
+      if (context.deckTypes >= unique.threshold)
+        trainingDelta += unique.training;
+      break;
+    case "fans":
+      trainingDelta +=
+        Math.min(unique.maxPoints, Math.floor(context.fans / unique.fansPerPoint)) /
+        100;
+      break;
+    case "friendship-ramp":
+      if (rainbow)
+        friendshipMultiplier =
+          1 +
+          Math.min(
+            unique.cap,
+            Math.max(0, context.friendshipTrainings) * unique.step,
+          ) /
+            100;
+      break;
+    case "energy-friendship":
+      if (rainbow) {
+        const energy = Math.max(30, context.currentEnergy);
+        const percent = Math.max(0, 15 - Math.floor((energy - 30) * 0.15));
+        // Euophrys bakes +7% into unique_fs_bonus for this card.
+        friendshipMultiplier =
+          Number(card.unique_fs_bonus || 1) - unique.baked + percent / 100;
+      }
+      break;
+    case "max-energy-training": {
+      const steps = Math.max(0, Math.floor((context.maxEnergy - 100) / 4));
+      const actual = Math.min(0.2, 0.05 + steps * 0.03);
+      // Euophrys bakes +12% into tb for this card.
+      trainingDelta += actual - unique.baked;
+      break;
+    }
+    case "total-bond-training": {
+      const actual = Math.min(0.2, Math.floor(context.totalBond / 30) / 100);
+      // Euophrys bakes +15% into tb for this card.
+      trainingDelta += actual - unique.baked;
+      break;
+    }
+    case "supports-on-training":
+      trainingDelta +=
+        Math.max(1, Math.min(5, context.supportsOnTraining)) *
+        unique.trainingPerSupport;
+      break;
+  }
+
+  return { trainingDelta, friendshipMultiplier, context };
 }
 
 // The pace is a percentage of the "two core facilities" Grand Live model.
@@ -146,15 +274,16 @@ export function calculateMarginalTraining(card, trainingType, options = {}) {
   const growth = options.growth || [1, 1, 1, 1, 1, 1];
   const rainbow = Boolean(options.rainbow);
   const facilityLevel = Number(options.facilityLevel ?? 3);
+  const unique = globalUniqueModifiers(card, trainingType, options);
 
-  let trainingBonus = facilityTrainingBonus(card, facilityLevel);
+  let trainingBonus =
+    facilityTrainingBonus(card, facilityLevel) + unique.trainingDelta;
   let motivationBonus = Number(card.mb || 1);
   let friendshipBonus = 1;
   if (rainbow) {
     trainingBonus += Number(card.fs_training || 0);
     motivationBonus += Number(card.fs_motivation || 0);
-    friendshipBonus =
-      Number(card.fs_bonus || 1) * Number(card.unique_fs_bonus || 1);
+    friendshipBonus = Number(card.fs_bonus || 1) * unique.friendshipMultiplier;
   }
 
   const result = new Array(6).fill(0);
@@ -194,13 +323,14 @@ export function calculateCardEV(card, options = {}) {
   const facilityLevel = clampFacilityLevel(
     options.facilityLevel ?? profile.facilityLevel ?? 3,
   );
+  const uniqueOptions = { ...options, facilityLevel };
   const appearance = calculateAppearance(card, globalSpecialty);
   const rainbowMarginal = calculateMarginalTraining(card, card.type, {
+    ...uniqueOptions,
     gains: profile.gains[card.type],
     motivation,
     growth,
     rainbow: true,
-    facilityLevel,
   });
   const specialtyVector = rainbowMarginal.map(
     (value) => value * appearance.specialty,
@@ -210,11 +340,11 @@ export function calculateCardEV(card, options = {}) {
   for (let trainingType = 0; trainingType < 5; trainingType++) {
     if (trainingType === card.type) continue;
     const marginal = calculateMarginalTraining(card, trainingType, {
+      ...uniqueOptions,
       gains: profile.gains[trainingType],
       motivation,
       growth,
       rainbow: false,
-      facilityLevel,
     });
     for (let stat = 0; stat < 6; stat++) {
       offVector[stat] += marginal[stat] * appearance.eachOff;
@@ -239,13 +369,12 @@ export function calculateCardEV(card, options = {}) {
 
 function conditionalFlags(card) {
   const flags = [];
-  if ((card.fs_ramp?.[0] || 0) !== 0) flags.push("ramping friendship unique");
-  if ((card.crowd_bonus || 0) !== 0)
-    flags.push("crowd-size training unique");
-  if ((card.highlander_training || 0) !== 0)
-    flags.push("deck-diversity training unique");
-  if ((card.fan_bonus || 0) !== 0)
-    flags.push("fan-count training unique");
+  const unsupported = UNSUPPORTED_GLOBAL_UNIQUES[Number(card.id)];
+  if (unsupported) flags.push(unsupported);
+  if (card.future)
+    flags.push(
+      "future JP unique coverage is scenario-dependent and not yet guaranteed",
+    );
   return flags;
 }
 
@@ -602,7 +731,7 @@ function initBrowser() {
     }
     const { card, ev, flags } = row;
     const warning = flags.length
-      ? `<div class="warning-box"><strong>Conditional unique:</strong> ${htmlEscape(flags.join(", "))}. The isolated benchmark does not guess the trigger state for these dynamic modifiers, so treat this card's result as a baseline.</div>`
+      ? `<div class="warning-box"><strong>★ Unique not fully modeled:</strong> ${htmlEscape(flags.join(", "))}. The displayed training output excludes that value rather than silently guessing it.</div>`
       : "";
     els.resultDetails.innerHTML = `<div class="detail-card" data-card-type="${card.type}"><div class="detail-top"><div>${titleMarkup(card)}<div class="name-row"><div class="detail-title">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="search-meta">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · #${card.id} · Specialty Priority ${fmt(card.specialty_rate, 0)} · Specialty Rate ${pct(ev.appearance.specialty)}${facilityUniqueMeta(card, ev)}</div></div><div class="formula-chip">#${card.id}</div></div><div class="detail-ev-heading"><strong>Per-turn Specialty EV by stat</strong><span>Appearance-weighted average contribution across all turns.</span></div><div class="stat-vector">${STAT_NAMES.map((name, i) => `<div class="stat-cell"><span>${name}</span><strong>${fmt(ev.specialtyVector[i])}</strong></div>`).join("")}</div>${warning}</div>`;
   }
@@ -626,7 +755,7 @@ function initBrowser() {
     els.resultsBody.innerHTML = rows
       .map((row, index) => {
         const { card, ev, flags } = row;
-        return `<tr data-detail-id="${card.id}" class="${state.activeDetailId === card.id ? "active" : ""}" data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="result-support" data-card-type="${card.type}"><div class="accent-card-thumb small"><img class="card-thumb" src="${supportImageUrl(card.id)}" alt="" /></div><div>${titleMarkup(card, "result-titleline")}<div class="name-row"><div class="result-name">${htmlEscape(card.char_name)}${flags.length ? '<span class="warn-dot" title="Context-dependent unique">◆</span>' : ""}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="result-sub">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · #${card.id}</div></div></div></td><td><div class="metric-main">${fmt(card.specialty_rate, 0)}</div><div class="metric-sub">得意率</div></td><td><div class="metric-main">${pct(ev.appearance.specialty)}</div><div class="metric-sub">preferred training appearance</div></td><td><div class="metric-main">+${fmt(ev.rainbowScore)}</div><div class="metric-sub">extra weighted stats</div></td><td class="${index === 0 ? "best" : ""}"><div class="metric-main">${fmt(ev.specialtyScore)}</div><div class="metric-sub">weighted stats / turn</div></td></tr>`;
+        return `<tr data-detail-id="${card.id}" class="${state.activeDetailId === card.id ? "active" : ""}" data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="result-support" data-card-type="${card.type}"><div class="accent-card-thumb small"><img class="card-thumb" src="${supportImageUrl(card.id)}" alt="" /></div><div>${titleMarkup(card, "result-titleline")}<div class="name-row"><div class="result-name">${htmlEscape(card.char_name)}${flags.length ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>' : ""}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="result-sub">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · #${card.id}</div></div></div></td><td><div class="metric-main">${fmt(card.specialty_rate, 0)}</div><div class="metric-sub">得意率</div></td><td><div class="metric-main">${pct(ev.appearance.specialty)}</div><div class="metric-sub">preferred training appearance</div></td><td><div class="metric-main">+${fmt(ev.rainbowScore)}</div><div class="metric-sub">extra weighted stats</div></td><td class="${index === 0 ? "best" : ""}"><div class="metric-main">${fmt(ev.specialtyScore)}</div><div class="metric-sub">weighted stats / turn</div></td></tr>`;
       })
       .join("");
     renderDetails(
@@ -747,7 +876,7 @@ function initBrowser() {
         payload.future_card_count ||
           state.groups.filter((g) => g.sample.future).length,
       );
-      els.sourcePill.textContent = `${globalCount} Global${futureCount ? ` · ${futureCount} future` : ""} · synced ${date}`;
+      els.sourcePill.textContent = `${globalCount} Global${futureCount ? ` · ${futureCount} future` : ""} · uniques through ${GLOBAL_UNIQUE_COVERAGE} · synced ${date}`;
       els.sourcePill.classList.add("ready");
       renderAll();
     })
