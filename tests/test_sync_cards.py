@@ -13,6 +13,31 @@ class SyncCardsTests(unittest.TestCase):
         global_cards=[{"id":1001,"type":0,"limit_break":0},{"id":1002,"type":4,"limit_break":0}];jp_cards=[{"id":1001,"type":0,"limit_break":0},{"id":2001,"type":2,"limit_break":0},{"id":2001,"type":2,"limit_break":4}]
         tagged=sync_cards.merge_global_and_future(global_cards,jp_cards)
         self.assertEqual([(r["id"],future) for r,future in tagged],[(1001,False),(1002,False),(2001,True),(2001,True)])
+    def test_euophrys_js_object_literal_card_array_is_supported(self):
+        source='''const cards = [
+          {
+            id: 30147,
+            type: 0,
+            rarity: 3,
+            limit_break: 4,
+            char_name: "ジャングルポケット",
+            specialty_rate: 80,
+          },
+        ];
+        export default cards;'''
+        cards=sync_cards.extract_json_array(source)
+        self.assertEqual(cards[0]["id"],30147);self.assertEqual(cards[0]["char_name"],"ジャングルポケット")
+    def test_umapyoi_support_chara_id_joins_character_game_id(self):
+        support_rows=[{"id":30147,"chara_id":1061,"title_en":"[The Frontier]"}]
+        character_rows=[{"id":9999,"game_id":1061,"name_en":"Jungle Pocket","name_jp":"ジャングルポケット","thumb_img":"https://example.test/jungle.png"}]
+        titles,names,portraits=sync_cards.join_umapyoi_metadata(support_rows,character_rows,{30147})
+        self.assertEqual(titles[30147],"The Frontier");self.assertEqual(names[30147],"Jungle Pocket");self.assertEqual(portraits[30147],"https://example.test/jungle.png")
+    def test_future_card_uses_umapyoi_english_name_without_overriding_global_names(self):
+        required={"type":0,"rarity":3,"limit_break":4,"specialty_rate":80}
+        tagged=[({"id":30147,"char_name":"ジャングルポケット",**required},True),({"id":30028,"char_name":"Kitasan Black",**required},False)]
+        result=sync_cards.normalize_tagged(tagged,{}, {},{},minimum_rows=2,names={30147:"Jungle Pocket",30028:"Should Not Replace"})
+        by_id={row["id"]:row for row in result}
+        self.assertEqual(by_id[30147]["char_name"],"Jungle Pocket");self.assertEqual(by_id[30028]["char_name"],"Kitasan Black")
     def test_suspiciously_small_inputs_still_fail_by_default(self):
         with self.assertRaisesRegex(ValueError,"suspiciously small event dataset"):sync_cards.extract_events((FIXTURES/"events.js").read_text(encoding="utf-8"))
     def test_card_array_requires_valid_json(self):

@@ -11,10 +11,43 @@ DEFAULT_TITLES_URL="https://api.umapyoi.net/api/v1/support"
 FIELDS=("id","type","rarity","limit_break","char_name","specialty_rate","unique_specialty","fs_specialty","tb","mb","fs_bonus","unique_fs_bonus","stat_bonus","fs_stats","fs_training","fs_motivation","fs_ramp","crowd_bonus","highlander_threshold","highlander_training","fan_bonus","wisdom_recovery","sb","offstat_appearance_denominator")
 DEFAULTS={"specialty_rate":0,"unique_specialty":1,"fs_specialty":1,"tb":1,"mb":1,"fs_bonus":1,"unique_fs_bonus":1,"stat_bonus":[0,0,0,0,0,0],"fs_stats":[0,0,0,0,0,0],"fs_training":0,"fs_motivation":0,"fs_ramp":[0,0],"crowd_bonus":0,"highlander_threshold":99,"highlander_training":0,"fan_bonus":0,"wisdom_recovery":0,"sb":0,"offstat_appearance_denominator":4}
 EVENT_RE=re.compile(r"^\s*(\d+):\s*(\[[^\]\n]+\])",re.MULTILINE)
+def _jsonify_js_object_literal(text:str):
+    out=[];i=0;in_string=False;escaped=False
+    while i<len(text):
+        ch=text[i]
+        if in_string:
+            out.append(ch)
+            if escaped:escaped=False
+            elif ch=="\\":escaped=True
+            elif ch=='"':in_string=False
+            i+=1;continue
+        if ch=='"':
+            in_string=True;out.append(ch);i+=1;continue
+        if ch==",":
+            j=i+1
+            while j<len(text) and text[j].isspace():j+=1
+            if j<len(text) and text[j] in "}]":
+                i+=1;continue
+        if ch in "{,":
+            out.append(ch);i+=1
+            while i<len(text) and text[i].isspace():out.append(text[i]);i+=1
+            if i<len(text) and (text[i].isalpha() or text[i] in "_$"):
+                key_start=i;i+=1
+                while i<len(text) and (text[i].isalnum() or text[i] in "_$"):i+=1
+                key=text[key_start:i];j=i
+                while j<len(text) and text[j].isspace():j+=1
+                if j<len(text) and text[j]==":":
+                    out.append(json.dumps(key));out.append(text[i:j]);out.append(":");i=j+1;continue
+                out.append(text[key_start:i]);continue
+            continue
+        out.append(ch);i+=1
+    return "".join(out)
 def extract_json_array(source:str):
     start,end=source.find("["),source.rfind("]")
     if start<0 or end<=start: raise ValueError("Could not locate the card array in upstream card data")
-    data=json.loads(source[start:end+1])
+    payload=source[start:end+1]
+    try:data=json.loads(payload)
+    except json.JSONDecodeError:data=json.loads(_jsonify_js_object_literal(payload))
     if not isinstance(data,list): raise ValueError("Upstream card payload was not a list")
     return data
 def extract_events(source:str,minimum_rows:int=100):
@@ -31,7 +64,7 @@ def clean_title(value):
 def rows_from_payload(payload):
     if isinstance(payload,list):return payload
     if not isinstance(payload,dict):return []
-    for key in ("data","supports","support_cards","supportData"):
+    for key in ("data","supports","support_cards","supportData","characters"):
         if isinstance(payload.get(key),list):return payload[key]
     return []
 def title_from_row(row):
@@ -44,6 +77,10 @@ def id_from_row(row):
 def chara_id_from_row(row):
     if not isinstance(row,dict):return None
     try:return int(row.get("chara_id",row.get("char_id")))
+    except (TypeError,ValueError):return None
+def game_id_from_row(row):
+    if not isinstance(row,dict):return None
+    try:return int(row.get("game_id",row.get("gameId")))
     except (TypeError,ValueError):return None
 def fetch_text(url:str):
     request=urllib.request.Request(url,headers={"User-Agent":"UmaStatOutput/1.5 (+https://github.com/omni-/UmaStatOutput)"})
@@ -59,29 +96,39 @@ def extract_metadata_from_file(source:str):
         portrait=str(row.get("portrait_url") or row.get("thumb_img") or "").strip() if isinstance(row,dict) else ""
         if card_id is not None and portrait:portraits[card_id]=portrait
     return titles,portraits
+def join_umapyoi_metadata(support_rows,character_rows,target_ids:set[int]):
+    titles,names,portraits,card_to_chara={},{},{},{}
+    for row in support_rows:
+        card_id=id_from_row(row)
+        if card_id is None or card_id not in target_ids:continue
+        chara_id=chara_id_from_row(row)
+        if chara_id is not None:card_to_chara[card_id]=chara_id
+        title=title_from_row(row)
+        if title:titles[card_id]=title
+    characters={}
+    for row in character_rows:
+        game_id=game_id_from_row(row)
+        if game_id is not None and isinstance(row,dict):characters[game_id]=row
+    for card_id,chara_id in card_to_chara.items():
+        row=characters.get(chara_id)
+        if not row:continue
+        name=str(row.get("name_en") or row.get("nameEn") or "").strip()
+        portrait=str(row.get("thumb_img") or row.get("thumbImg") or "").strip()
+        if name:names[card_id]=name
+        if portrait:portraits[card_id]=portrait
+    return titles,names,portraits
 def fetch_umapyoi_metadata(list_url:str,target_ids:set[int]):
-    titles,portraits,card_to_chara={},{},{}
+    titles,names,portraits={},{},{}
     try:
-        rows=rows_from_payload(fetch_json(list_url))
-        if not rows:raise ValueError("support list contained no rows")
-        for row in rows:
-            card_id=id_from_row(row)
-            if card_id is None or card_id not in target_ids:continue
-            chara_id=chara_id_from_row(row)
-            if chara_id is not None:card_to_chara[card_id]=chara_id
-            title=title_from_row(row)
-            if title:titles[card_id]=title
+        support_rows=rows_from_payload(fetch_json(list_url))
+        if not support_rows:raise ValueError("support list contained no rows")
         api_root=list_url.rsplit("/support",1)[0]
         try:
-            portraits_by_chara={}
-            for row in rows_from_payload(fetch_json(f"{api_root}/character/list")):
-                chara_id=id_from_row(row)
-                if chara_id is None or not isinstance(row,dict):continue
-                portrait=str(row.get("thumb_img") or row.get("thumbImg") or "").strip()
-                if portrait:portraits_by_chara[chara_id]=portrait
-            for card_id,chara_id in card_to_chara.items():
-                if chara_id in portraits_by_chara:portraits[card_id]=portraits_by_chara[chara_id]
-        except Exception as exc:print(f"WARN: Umapyoi portrait enrichment unavailable: {exc}",file=sys.stderr)
+            character_rows=rows_from_payload(fetch_json(f"{api_root}/character/list"))
+            titles,names,portraits=join_umapyoi_metadata(support_rows,character_rows,target_ids)
+        except Exception as exc:
+            print(f"WARN: Umapyoi character enrichment unavailable: {exc}",file=sys.stderr)
+            titles,_,_=join_umapyoi_metadata(support_rows,[],target_ids)
         base=list_url.rstrip("/")
         for card_id in sorted(target_ids-titles.keys()):
             try:
@@ -93,15 +140,15 @@ def fetch_umapyoi_metadata(list_url:str,target_ids:set[int]):
             except Exception as exc:print(f"WARN: Umapyoi support {card_id} title lookup failed: {exc}",file=sys.stderr)
             time.sleep(.13)
     except Exception as exc:print(f"WARN: Umapyoi metadata enrichment unavailable; deploying without it: {exc}",file=sys.stderr)
-    return titles,portraits
+    return titles,names,portraits
 def playable(cards):return [c for c in cards if not c.get("group") and c.get("type") in range(5)]
 def merge_global_and_future(global_cards,jp_cards):
     global_ids={int(c["id"]) for c in playable(global_cards)}
     merged=[(c,False) for c in playable(global_cards)]
     merged.extend((c,True) for c in playable(jp_cards) if int(c["id"]) not in global_ids)
     return merged
-def normalize_tagged(tagged_cards,events,titles,portraits,minimum_rows:int=100):
-    result=[];seen=set()
+def normalize_tagged(tagged_cards,events,titles,portraits,minimum_rows:int=100,names=None):
+    names=names or {};result=[];seen=set()
     for raw,future in tagged_cards:
         item={}
         for field in FIELDS:
@@ -111,6 +158,7 @@ def normalize_tagged(tagged_cards,events,titles,portraits,minimum_rows:int=100):
         key=(int(item["id"]),int(item["limit_break"]))
         if key in seen:raise ValueError(f"Duplicate card/LB row: {key}")
         seen.add(key);card_id=int(item["id"])
+        if future and names.get(card_id):item["char_name"]=names[card_id]
         item["title"]=titles.get(card_id,"");item["portrait_url"]=portraits.get(card_id,"");item["event_stats"]=events.get(card_id);item["future"]=bool(future)
         result.append(item)
     if len(result)<minimum_rows:raise ValueError(f"Refusing suspiciously small dataset ({len(result)} rows)")
@@ -125,8 +173,11 @@ def main():
         jp_source=args.jp_input.read_text(encoding="utf-8") if args.jp_input else fetch_text(args.jp_url);jp_cards=extract_json_array(jp_source)
     except Exception as exc:print(f"WARN: JP future-card dataset unavailable; deploying Global cards only: {exc}",file=sys.stderr);jp_cards=[]
     tagged=merge_global_and_future(global_cards,jp_cards);target_ids={int(c["id"]) for c,_ in tagged}
-    titles,portraits=extract_metadata_from_file(args.titles_input.read_text(encoding="utf-8")) if args.titles_input else fetch_umapyoi_metadata(args.titles_url,target_ids)
-    cards=normalize_tagged(tagged,events,titles,portraits);global_count=len({c["id"] for c in cards if not c["future"]});future_count=len({c["id"] for c in cards if c["future"]});titled=len({c["id"] for c in cards if c["title"]});portrait_count=len({c["id"] for c in cards if c["portrait_url"]})
+    if args.titles_input:
+        titles,portraits=extract_metadata_from_file(args.titles_input.read_text(encoding="utf-8"));names={}
+    else:
+        titles,names,portraits=fetch_umapyoi_metadata(args.titles_url,target_ids)
+    cards=normalize_tagged(tagged,events,titles,portraits,names=names);global_count=len({c["id"] for c in cards if not c["future"]});future_count=len({c["id"] for c in cards if c["future"]});titled=len({c["id"] for c in cards if c["title"]});portrait_count=len({c["id"] for c in cards if c["portrait_url"]})
     payload={"sources":{"cards":args.url,"future_cards":args.jp_url,"events":args.events_url,"metadata":args.titles_url},"generated_at":datetime.now(timezone.utc).isoformat(),"card_count":global_count,"future_card_count":future_count,"row_count":len(cards),"event_count":len(events),"title_count":titled,"portrait_count":portrait_count,"cards":cards}
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(payload,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
     print(f"Wrote {len(cards)} card/LB rows ({global_count} Global supports; {future_count} future JP supports; {len(events)} event rows; {titled} titles; {portrait_count} portraits) to {args.output}")
