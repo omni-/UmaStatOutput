@@ -11,6 +11,7 @@ import {
   portraitImageUrl,
   supportImageUrl,
 } from "./app.mjs";
+import { averageFriendshipTrainingsForCareer } from "./unique-model.mjs";
 
 export const GRAND_LIVE_RUN = {
   label: "Grand Live",
@@ -73,26 +74,6 @@ function eventInfo(card) {
   return { bond: 0, source: "no event estimate" };
 }
 
-function adjustedForRamp(card, rainbowClicks) {
-  const adjusted = {
-    ...card,
-    stat_bonus: [...(card.stat_bonus || [0, 0, 0, 0, 0, 0])],
-    fs_stats: [...(card.fs_stats || [0, 0, 0, 0, 0, 0])],
-  };
-  const step = Number(card.fs_ramp?.[0] || 0);
-  const cap = Number(card.fs_ramp?.[1] || 0);
-  if (step <= 0 || cap <= 0 || rainbowClicks <= 0) return adjusted;
-
-  let current = 0;
-  let total = 0;
-  for (let remaining = rainbowClicks * 0.66; remaining > 0; remaining--) {
-    total += current;
-    current = Math.min(current + step, cap);
-  }
-  adjusted.unique_fs_bonus = 1 + total / rainbowClicks / 100;
-  return adjusted;
-}
-
 function addScaled(target, values, scale) {
   for (let i = 0; i < 6; i++)
     target[i] += Number(values[i] || 0) * scale;
@@ -141,7 +122,10 @@ export function calculateCareerProjection(card, options = {}) {
   }
 
   const rainbowClicks = afterClicks[card.type];
-  const adjusted = adjustedForRamp(card, rainbowClicks);
+  const averageFriendshipTrainings = averageFriendshipTrainingsForCareer(
+    card,
+    rainbowClicks,
+  );
   const beforeFacilityLevel = averageFacilityLevel(0, daysToBond, facilityPace);
   const afterFacilityLevel = averageFacilityLevel(
     daysToBond,
@@ -151,20 +135,26 @@ export function calculateCareerProjection(card, options = {}) {
   const vector = new Array(6).fill(0);
 
   for (let training = 0; training < 5; training++) {
-    const before = calculateMarginalTraining(adjusted, training, {
+    const before = calculateMarginalTraining(card, training, {
+      ...options,
       gains: run.unbondedGains[training],
       motivation,
       growth,
       rainbow: false,
+      bond: 0,
+      friendshipTrainings: 0,
       facilityLevel: beforeFacilityLevel,
     });
     addScaled(vector, before, beforeClicks[training]);
 
-    const after = calculateMarginalTraining(adjusted, training, {
+    const after = calculateMarginalTraining(card, training, {
+      ...options,
       gains: run.bondedGains[training],
       motivation,
       growth,
       rainbow: training === card.type,
+      bond: 80,
+      friendshipTrainings: averageFriendshipTrainings,
       facilityLevel: afterFacilityLevel,
     });
     const scenarioScale = training === card.type ? run.scenarioMultiplier : 1;
@@ -185,6 +175,7 @@ export function calculateCareerProjection(card, options = {}) {
     turnsPerFacilityLevel: turnsPerFacilityLevel(facilityPace),
     beforeFacilityLevel,
     afterFacilityLevel,
+    averageFriendshipTrainings,
   };
 }
 
@@ -196,7 +187,6 @@ function esc(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
-
 function lbLabel(lb) {
   return Number(lb) === 4 ? "MLB" : `LB${lb}`;
 }
@@ -217,25 +207,19 @@ function initCareerView() {
   const wrap = document.querySelector("#career-results");
   const selectedRoot = document.querySelector("#selected-cards");
   if (!body || !wrap || !selectedRoot) return;
-
   let payload = null;
 
   function readSettings() {
     const growth = [0, 1, 2, 3, 4].map(
-      (i) =>
-        1 + Number(document.querySelector(`#growth-${i}`)?.value || 0) / 100,
+      (i) => 1 + Number(document.querySelector(`#growth-${i}`)?.value || 0) / 100,
     );
     growth.push(1);
     return {
-      globalSpecialty: Number(
-        document.querySelector("#global-spec")?.value || 0,
-      ),
+      globalSpecialty: Number(document.querySelector("#global-spec")?.value || 0),
       profile: document.querySelector("#training-profile")?.value || "gl-late",
       motivation: Number(document.querySelector("#motivation")?.value ?? 0.2),
       spWeight: Number(document.querySelector("#sp-weight")?.value ?? 1.2),
-      facilityPace: Number(
-        document.querySelector("#facility-pace")?.value ?? 100,
-      ),
+      facilityPace: Number(document.querySelector("#facility-pace")?.value ?? 100),
       growth,
     };
   }
@@ -262,22 +246,15 @@ function initCareerView() {
       body.innerHTML = "";
       return;
     }
-
     const options = readSettings();
     const rows = cards
-      .map((card) => ({
-        card,
-        career: calculateCareerProjection(card, options),
-      }))
+      .map((card) => ({ card, career: calculateCareerProjection(card, options) }))
       .sort((a, b) => b.career.score - a.career.score);
-
     body.innerHTML = rows
       .map((row, index) => {
         const { card, career } = row;
         const stats = career.vector
-          .map(
-            (value) => `<td><strong>${Number(value).toFixed(1)}</strong></td>`,
-          )
+          .map((value) => `<td><strong>${Number(value).toFixed(1)}</strong></td>`)
           .join("");
         const facilityMeta = hasFacilityLevelUnique(card)
           ? ` · facility ≈ Lv${career.beforeFacilityLevel.toFixed(1)} → Lv${career.afterFacilityLevel.toFixed(1)}`
@@ -314,11 +291,9 @@ function initCareerView() {
         const el = document.querySelector(selector);
         if (el) el.addEventListener("input", () => queueMicrotask(render));
       });
-      document
-        .querySelectorAll("[data-spec-preset]")
-        .forEach((button) =>
-          button.addEventListener("click", () => queueMicrotask(render)),
-        );
+      document.querySelectorAll("[data-spec-preset]").forEach((button) =>
+        button.addEventListener("click", () => queueMicrotask(render)),
+      );
       document
         .querySelector("#reset-settings")
         ?.addEventListener("click", () => queueMicrotask(render));

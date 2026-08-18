@@ -9,12 +9,14 @@ import {
   facilityLevelAtTurn,
   facilityTrainingBonus,
   turnsPerFacilityLevel,
+  uniqueModelWarnings,
 } from "../app.mjs";
 import {
   GRAND_LIVE_RUN,
   UNITY_CUP_RUN,
   calculateCareerProjection,
 } from "../career.mjs";
+import { resolveUniqueModifiers } from "../unique-model.mjs";
 
 const card = {
   id: 99999,
@@ -35,6 +37,7 @@ const card = {
   sb: 35,
   offstat_appearance_denominator: 4,
   event_stats: [20, 0, 10, 0, 0, 30, 0, 10],
+  special_uniques: [],
 };
 
 test("appearance formula reproduces Euophrys Kitasan example", () => {
@@ -116,22 +119,103 @@ test("known pre-bond marginal vector is numerically pinned", () => {
   );
 });
 
-test("Maruzensky facility unique replaces Euophrys' baked Lv3 approximation", () => {
-  const smaru = { ...card, id: 30107, tb: 1.15 };
+test("facility-level unique is driven by raw type 111, not support id", () => {
+  const smaru = {
+    ...card,
+    id: 987654,
+    tb: 1.15,
+    special_uniques: [{ type: 111, value: 8, value_1: 5 }],
+  };
   assert.ok(Math.abs(facilityTrainingBonus(smaru, 1) - 1.05) < 1e-12);
   assert.ok(Math.abs(facilityTrainingBonus(smaru, 3) - 1.15) < 1e-12);
   assert.ok(Math.abs(facilityTrainingBonus(smaru, 5) - 1.25) < 1e-12);
-
-  const lv3 = calculateCardEV(smaru, {
-    profile: "gl-late",
-    facilityLevel: 3,
-  });
-  const lv5 = calculateCardEV(smaru, {
-    profile: "gl-late",
-    facilityLevel: 5,
-  });
+  const lv3 = calculateCardEV(smaru, { profile: "gl-late", facilityLevel: 3 });
+  const lv5 = calculateCardEV(smaru, { profile: "gl-late", facilityLevel: 5 });
   assert.ok(lv5.rainbowScore > lv3.rainbowScore);
   assert.ok(lv5.specialtyScore > lv3.specialtyScore);
+});
+
+test("deck-diversity unique is driven by type 103", () => {
+  const digitalLike = {
+    ...card,
+    id: 888888,
+    special_uniques: [{ type: 103, value: 5, value_1: 15 }],
+  };
+  const off = calculateCardEV(digitalLike, { deckTypes: 4 });
+  const on = calculateCardEV(digitalLike, { deckTypes: 5 });
+  assert.ok(on.rainbowScore > off.rainbowScore);
+});
+
+test("Mr CB type 101 stat/SP unique is fully modeled without a card-id exception", () => {
+  const mrCb = {
+    ...card,
+    id: 30097,
+    type: 4,
+    fs_stats: [0, 0, 0, 0, 1, 1],
+    special_uniques: [
+      { type: 101, value: 80, value_1: 7, value_2: 1, value_3: 30, value_4: 1 },
+    ],
+  };
+  assert.deepEqual(uniqueModelWarnings(mrCb, "gl-late"), []);
+});
+
+test("type 112 is disclosed by mechanic rather than support id", () => {
+  const festaLike = {
+    ...card,
+    id: 777777,
+    special_uniques: [{ type: 112, value: 20 }],
+  };
+  assert.match(uniqueModelWarnings(festaLike, "gl-late")[0], /failure-protection/);
+});
+
+test("unknown unique types retain scenario coverage warning", () => {
+  const future = {
+    ...card,
+    id: 666666,
+    future: true,
+    special_uniques: [{ type: 120, value: 1 }],
+  };
+  assert.match(
+    uniqueModelWarnings(future, "gl-late")[0],
+    /not certified for Grand Concert \/ 1.5 Anniversary/,
+  );
+});
+
+test("type 108 max-energy scaling is mechanic-driven and removes upstream bake", () => {
+  const pearl = {
+    ...card,
+    id: 818181,
+    tb: 1.12,
+    special_uniques: [
+      { type: 108, value: 8, value_1: 100, value_2: 75, value_3: 5, value_4: 20 },
+    ],
+  };
+  const baseline = calculateMarginalTraining(pearl, pearl.type, {
+    gains: TRAINING_PROFILES["gl-late"].gains[pearl.type],
+    rainbow: true,
+    maxEnergy: 100,
+  });
+  const raised = calculateMarginalTraining(pearl, pearl.type, {
+    gains: TRAINING_PROFILES["gl-late"].gains[pearl.type],
+    rainbow: true,
+    maxEnergy: 108,
+  });
+  assert.ok(raised[0] > baseline[0]);
+});
+
+test("type 102 undoes the upstream rainbow bake and applies off-specialty", () => {
+  const bakushinLike = {
+    ...card,
+    id: 555555,
+    type: 3,
+    fs_training: 0.2,
+    special_uniques: [{ type: 102, value: 80, value_1: 20 }],
+  };
+  const rainbow = resolveUniqueModifiers(bakushinLike, 3, { rainbow: true, bond: 80 });
+  const off = resolveUniqueModifiers(bakushinLike, 1, { rainbow: false, bond: 80 });
+  assert.equal(rainbow.rainbowTrainingDelta, -0.2);
+  assert.equal(rainbow.trainingDelta, 0);
+  assert.equal(off.trainingDelta, 0.2);
 });
 
 test("Grand Live facility pace reaches Lv5 around turn 32", () => {
@@ -187,36 +271,37 @@ test("bond timing and whole-run output are numerically pinned", () => {
   assert.ok(Math.abs(r.rainbowClicks - 286 / 23) < 1e-12);
   assert.deepEqual(
     r.vector.map((value) => Number(value.toFixed(9))),
-    [
-      241.7651615,
-      13.371602808,
-      98.880157011,
-      15.780475091,
-      8.374373641,
-      45.617886609,
-    ],
+    [241.7651615,13.371602808,98.880157011,15.780475091,8.374373641,45.617886609],
   );
   assert.ok(Math.abs(r.score - 423.78965665942025) < 1e-12);
 });
 
-test("faster facility progression raises Maruzensky whole-run output", () => {
+test("faster facility progression raises a type-111 card's whole-run output", () => {
   const smaru = {
     ...card,
-    id: 30107,
+    id: 444444,
     tb: 1.15,
     unique_specialty: 1,
     specialty_rate: 35,
+    special_uniques: [{ type: 111, value: 8, value_1: 5 }],
   };
-  const slow = calculateCareerProjection(smaru, {
-    profile: "gl-late",
-    facilityPace: 50,
-  });
-  const fast = calculateCareerProjection(smaru, {
-    profile: "gl-late",
-    facilityPace: 100,
-  });
+  const slow = calculateCareerProjection(smaru, { profile: "gl-late", facilityPace: 50 });
+  const fast = calculateCareerProjection(smaru, { profile: "gl-late", facilityPace: 100 });
   assert.ok(fast.score > slow.score);
   assert.ok(fast.afterFacilityLevel > slow.afterFacilityLevel);
+});
+
+test("Sirius type-106 career ramp uses raw unique metadata", () => {
+  const sirius = {
+    ...card,
+    id: 333333,
+    type: 4,
+    unique_specialty: 1,
+    special_uniques: [{ type: 106, value: 5, value_1: 1, value_2: 3 }],
+  };
+  const r = calculateCareerProjection(sirius, { profile: "gl-late" });
+  assert.ok(r.averageFriendshipTrainings > 0);
+  assert.ok(r.averageFriendshipTrainings <= 5);
 });
 
 test("Unity Cup career projection uses Unity Cup run values", () => {

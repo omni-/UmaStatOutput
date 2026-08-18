@@ -9,7 +9,7 @@ sync_cards=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(sync_ca
 class SyncCardsTests(unittest.TestCase):
     def test_fixture_pipeline_parses_and_normalizes_upstream_shapes(self):
         cards=sync_cards.extract_json_array((FIXTURES/"cards.js").read_text(encoding="utf-8"));events=sync_cards.extract_events((FIXTURES/"events.js").read_text(encoding="utf-8"),minimum_rows=2);titles,portraits=sync_cards.extract_metadata_from_file((FIXTURES/"metadata.json").read_text(encoding="utf-8"));result=sync_cards.normalize(cards,events,titles,portraits,minimum_rows=2)
-        self.assertEqual([(r["id"],r["limit_break"]) for r in result],[(1001,0),(1002,4)]);self.assertEqual(result[0]["title"],"Fixture Title");self.assertEqual(result[0]["portrait_url"],"https://example.test/1001.png");self.assertEqual(result[0]["event_stats"],[1,2,3,4,5,6,7,8]);self.assertFalse(result[0]["future"])
+        self.assertEqual([(r["id"],r["limit_break"]) for r in result],[(1001,0),(1002,4)]);self.assertEqual(result[0]["title"],"Fixture Title");self.assertEqual(result[0]["portrait_url"],"https://example.test/1001.png");self.assertEqual(result[0]["event_stats"],[1,2,3,4,5,6,7,8]);self.assertFalse(result[0]["future"]);self.assertIsNone(result[0]["special_uniques"])
     def test_future_merge_keeps_only_jp_only_ids(self):
         global_cards=[{"id":1001,"type":0,"limit_break":0},{"id":1002,"type":4,"limit_break":0}];jp_cards=[{"id":1001,"type":0,"limit_break":0},{"id":2001,"type":2,"limit_break":0},{"id":2001,"type":2,"limit_break":4}]
         tagged=sync_cards.merge_global_and_future(global_cards,jp_cards)
@@ -49,6 +49,21 @@ class SyncCardsTests(unittest.TestCase):
         result=sync_cards.normalize_tagged(tagged,{}, {},{},minimum_rows=2,names={30147:"Jungle Pocket",30028:"Should Not Replace"})
         by_id={row["id"]:row for row in result}
         self.assertEqual(by_id[30147]["char_name"],"Jungle Pocket");self.assertEqual(by_id[30028]["char_name"],"Kitasan Black")
+    def test_bulk_support_data_preserves_raw_unique_type_and_values(self):
+        payload={"pageProps":{"supportData":[{"support_id":30097,"unique":{"level":30,"effects":[{"type":101,"value":80,"value_1":7,"value_2":1,"value_3":30,"value_4":1}]}},{"support_id":10001,"unique":None}]}}
+        uniques=sync_cards.extract_unique_metadata(payload)
+        self.assertEqual(uniques[30097]["level"],30)
+        self.assertEqual(uniques[30097]["effects"],[{"type":101,"value":80,"value_1":7,"value_2":1,"value_3":30,"value_4":1}])
+        self.assertEqual(uniques[10001],{"level":None,"effects":[]})
+    def test_normalized_rows_attach_raw_unique_metadata_by_support_id(self):
+        required={"type":0,"rarity":3,"limit_break":4,"specialty_rate":80,"char_name":"Synthetic"}
+        result=sync_cards.normalize_tagged([({"id":55555,**required},False)],{}, {},{},minimum_rows=1,uniques={55555:{"level":30,"effects":[{"type":111,"value":8,"value_1":5}]}})
+        self.assertEqual(result[0]["special_unique_level"],30)
+        self.assertEqual(result[0]["special_uniques"],[{"type":111,"value":8,"value_1":5}])
+    def test_missing_unique_metadata_remains_distinguishable_from_no_unique(self):
+        required={"type":0,"rarity":3,"limit_break":4,"specialty_rate":80,"char_name":"Synthetic"}
+        result=sync_cards.normalize_tagged([({"id":55555,**required},False)],{}, {},{},minimum_rows=1)
+        self.assertIsNone(result[0]["special_uniques"])
     def test_suspiciously_small_inputs_still_fail_by_default(self):
         with self.assertRaisesRegex(ValueError,"suspiciously small event dataset"):sync_cards.extract_events((FIXTURES/"events.js").read_text(encoding="utf-8"))
     def test_card_array_requires_valid_json(self):

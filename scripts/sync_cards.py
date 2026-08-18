@@ -8,6 +8,7 @@ DEFAULT_URL="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/main/
 DEFAULT_JP_URL="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/main/src/cards/jp.js"
 DEFAULT_EVENTS_URL="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/main/src/card-events.js"
 DEFAULT_TITLES_URL="https://api.umapyoi.net/api/v1/support"
+DEFAULT_UNIQUES_URL="https://raw.githubusercontent.com/niiyant/uma--guide/main/DB/SOPORTES/supports.json"
 FIELDS=("id","type","rarity","limit_break","char_name","specialty_rate","unique_specialty","fs_specialty","tb","mb","fs_bonus","unique_fs_bonus","stat_bonus","fs_stats","fs_training","fs_motivation","fs_ramp","crowd_bonus","highlander_threshold","highlander_training","fan_bonus","wisdom_recovery","sb","offstat_appearance_denominator")
 DEFAULTS={"specialty_rate":0,"unique_specialty":1,"fs_specialty":1,"tb":1,"mb":1,"fs_bonus":1,"unique_fs_bonus":1,"stat_bonus":[0,0,0,0,0,0],"fs_stats":[0,0,0,0,0,0],"fs_training":0,"fs_motivation":0,"fs_ramp":[0,0],"crowd_bonus":0,"highlander_threshold":99,"highlander_training":0,"fan_bonus":0,"wisdom_recovery":0,"sb":0,"offstat_appearance_denominator":4}
 EVENT_RE=re.compile(r"^\s*(\d+):\s*(\[[^\]\n]+\])",re.MULTILINE)
@@ -67,6 +68,14 @@ def rows_from_payload(payload):
     for key in ("data","supports","support_cards","supportData","characters"):
         if isinstance(payload.get(key),list):return payload[key]
     return []
+def support_detail_rows(payload):
+    if isinstance(payload,list):return payload
+    if not isinstance(payload,dict):return []
+    page_props=payload.get("pageProps")
+    if isinstance(page_props,dict):
+        if isinstance(page_props.get("supportData"),list):return page_props["supportData"]
+        if isinstance(page_props.get("itemData"),dict):return [page_props["itemData"]]
+    return rows_from_payload(payload)
 def title_from_row(row):
     if not isinstance(row,dict):return ""
     return clean_title(row.get("title_en") or row.get("titleEn") or row.get("name_en") or row.get("title"))
@@ -83,7 +92,7 @@ def game_id_from_row(row):
     try:return int(row.get("game_id",row.get("gameId")))
     except (TypeError,ValueError):return None
 def fetch_text(url:str):
-    request=urllib.request.Request(url,headers={"User-Agent":"UmaStatOutput/1.5 (+https://github.com/omni-/UmaStatOutput)"})
+    request=urllib.request.Request(url,headers={"User-Agent":"UmaStatOutput/1.6 (+https://github.com/omni-/UmaStatOutput)"})
     with urllib.request.urlopen(request,timeout=30) as response:return response.read().decode("utf-8")
 def fetch_json(url:str):return json.loads(fetch_text(url))
 def extract_metadata_from_file(source:str):
@@ -96,6 +105,30 @@ def extract_metadata_from_file(source:str):
         portrait=str(row.get("portrait_url") or row.get("thumb_img") or "").strip() if isinstance(row,dict) else ""
         if card_id is not None and portrait:portraits[card_id]=portrait
     return titles,portraits
+def extract_unique_metadata(payload):
+    result={}
+    for row in support_detail_rows(payload):
+        card_id=id_from_row(row)
+        if card_id is None:continue
+        raw_unique=row.get("unique") if isinstance(row,dict) else None
+        if not isinstance(raw_unique,dict):
+            result[card_id]={"level":None,"effects":[]};continue
+        level=raw_unique.get("level")
+        try:level=int(level) if level is not None else None
+        except (TypeError,ValueError):level=None
+        normalized=[]
+        for effect in raw_unique.get("effects") or []:
+            if not isinstance(effect,dict):continue
+            try:effect_type=int(effect.get("type"))
+            except (TypeError,ValueError):continue
+            clean={"type":effect_type}
+            for key,value in effect.items():
+                if key=="type" or not str(key).startswith("value"):continue
+                try:clean[key]=int(value) if value is not None else None
+                except (TypeError,ValueError):clean[key]=value
+            normalized.append(clean)
+        result[card_id]={"level":level,"effects":normalized}
+    return result
 def join_umapyoi_metadata(support_rows,character_rows,target_ids:set[int]):
     titles,names,portraits,card_to_chara={},{},{},{}
     for row in support_rows:
@@ -124,7 +157,6 @@ def fetch_umapyoi_metadata(list_url:str,target_ids:set[int]):
         if not support_rows:raise ValueError("support list contained no rows")
         api_root=list_url.rsplit("/support",1)[0]
         try:
-            # /character/info includes game_id; /character/list does not expose the join key we need.
             character_rows=rows_from_payload(fetch_json(f"{api_root}/character/info"))
             titles,names,portraits=join_umapyoi_metadata(support_rows,character_rows,target_ids)
         except Exception as exc:
@@ -148,8 +180,8 @@ def merge_global_and_future(global_cards,jp_cards):
     merged=[(c,False) for c in playable(global_cards)]
     merged.extend((c,True) for c in playable(jp_cards) if int(c["id"]) not in global_ids)
     return merged
-def normalize_tagged(tagged_cards,events,titles,portraits,minimum_rows:int=100,names=None):
-    names=names or {};result=[];seen=set()
+def normalize_tagged(tagged_cards,events,titles,portraits,minimum_rows:int=100,names=None,uniques=None):
+    names=names or {};uniques=uniques or {};result=[];seen=set()
     for raw,future in tagged_cards:
         item={}
         for field in FIELDS:
@@ -160,13 +192,16 @@ def normalize_tagged(tagged_cards,events,titles,portraits,minimum_rows:int=100,n
         if key in seen:raise ValueError(f"Duplicate card/LB row: {key}")
         seen.add(key);card_id=int(item["id"])
         if future and names.get(card_id):item["char_name"]=names[card_id]
+        unique=uniques.get(card_id)
+        item["special_unique_level"]=unique.get("level") if unique is not None else None
+        item["special_uniques"]=unique.get("effects",[]) if unique is not None else None
         item["title"]=titles.get(card_id,"");item["portrait_url"]=portraits.get(card_id,"");item["event_stats"]=events.get(card_id);item["future"]=bool(future)
         result.append(item)
     if len(result)<minimum_rows:raise ValueError(f"Refusing suspiciously small dataset ({len(result)} rows)")
     result.sort(key=lambda c:(c["id"],c["limit_break"]));return result
-def normalize(cards,events,titles,portraits,minimum_rows:int=100):return normalize_tagged([(c,False) for c in playable(cards)],events,titles,portraits,minimum_rows)
+def normalize(cards,events,titles,portraits,minimum_rows:int=100,uniques=None):return normalize_tagged([(c,False) for c in playable(cards)],events,titles,portraits,minimum_rows,uniques=uniques)
 def main():
-    p=argparse.ArgumentParser();p.add_argument("--url",default=DEFAULT_URL);p.add_argument("--jp-url",default=DEFAULT_JP_URL);p.add_argument("--events-url",default=DEFAULT_EVENTS_URL);p.add_argument("--titles-url",default=DEFAULT_TITLES_URL);p.add_argument("--input",type=Path);p.add_argument("--jp-input",type=Path);p.add_argument("--events-input",type=Path);p.add_argument("--titles-input",type=Path);p.add_argument("--output",type=Path,default=Path("_site/data/cards.json"));args=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument("--url",default=DEFAULT_URL);p.add_argument("--jp-url",default=DEFAULT_JP_URL);p.add_argument("--events-url",default=DEFAULT_EVENTS_URL);p.add_argument("--titles-url",default=DEFAULT_TITLES_URL);p.add_argument("--uniques-url",default=DEFAULT_UNIQUES_URL);p.add_argument("--input",type=Path);p.add_argument("--jp-input",type=Path);p.add_argument("--events-input",type=Path);p.add_argument("--titles-input",type=Path);p.add_argument("--uniques-input",type=Path);p.add_argument("--output",type=Path,default=Path("_site/data/cards.json"));args=p.parse_args()
     global_source=args.input.read_text(encoding="utf-8") if args.input else fetch_text(args.url)
     event_source=args.events_input.read_text(encoding="utf-8") if args.events_input else fetch_text(args.events_url)
     global_cards=extract_json_array(global_source);events=extract_events(event_source)
@@ -178,9 +213,14 @@ def main():
         titles,portraits=extract_metadata_from_file(args.titles_input.read_text(encoding="utf-8"));names={}
     else:
         titles,names,portraits=fetch_umapyoi_metadata(args.titles_url,target_ids)
-    cards=normalize_tagged(tagged,events,titles,portraits,names=names);global_count=len({c["id"] for c in cards if not c["future"]});future_count=len({c["id"] for c in cards if c["future"]});titled=len({c["id"] for c in cards if c["title"]});portrait_count=len({c["id"] for c in cards if c["portrait_url"]})
-    payload={"sources":{"cards":args.url,"future_cards":args.jp_url,"events":args.events_url,"metadata":args.titles_url},"generated_at":datetime.now(timezone.utc).isoformat(),"card_count":global_count,"future_card_count":future_count,"row_count":len(cards),"event_count":len(events),"title_count":titled,"portrait_count":portrait_count,"cards":cards}
+    try:
+        unique_payload=json.loads(args.uniques_input.read_text(encoding="utf-8")) if args.uniques_input else fetch_json(args.uniques_url)
+        uniques=extract_unique_metadata(unique_payload)
+    except Exception as exc:
+        print(f"WARN: raw unique metadata unavailable; affected supports will be marked: {exc}",file=sys.stderr);uniques={}
+    cards=normalize_tagged(tagged,events,titles,portraits,names=names,uniques=uniques);global_count=len({c["id"] for c in cards if not c["future"]});future_count=len({c["id"] for c in cards if c["future"]});titled=len({c["id"] for c in cards if c["title"]});portrait_count=len({c["id"] for c in cards if c["portrait_url"]});unique_count=len({c["id"] for c in cards if c["special_uniques"] is not None})
+    payload={"sources":{"cards":args.url,"future_cards":args.jp_url,"events":args.events_url,"metadata":args.titles_url,"unique_metadata":args.uniques_url},"generated_at":datetime.now(timezone.utc).isoformat(),"card_count":global_count,"future_card_count":future_count,"row_count":len(cards),"event_count":len(events),"title_count":titled,"portrait_count":portrait_count,"unique_metadata_count":unique_count,"cards":cards}
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(payload,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
-    print(f"Wrote {len(cards)} card/LB rows ({global_count} Global supports; {future_count} future JP supports; {len(events)} event rows; {titled} titles; {portrait_count} portraits) to {args.output}")
+    print(f"Wrote {len(cards)} card/LB rows ({global_count} Global supports; {future_count} future JP supports; {len(events)} event rows; {titled} titles; {portrait_count} portraits; {unique_count} raw unique records) to {args.output}")
     return 0
 if __name__=="__main__":sys.exit(main())
