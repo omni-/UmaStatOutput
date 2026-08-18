@@ -3,6 +3,9 @@ import {
   calculateMarginalTraining,
   weightedSum,
   averageFacilityLevel,
+  effectiveStartingBond,
+  facilityLevelAtTurn,
+  GLOBAL_UNIQUE_CONTEXT,
   hasFacilityLevelUnique,
   turnsPerFacilityLevel,
   RARITY_NAMES,
@@ -79,6 +82,21 @@ function addScaled(target, values, scale) {
     target[i] += Number(values[i] || 0) * scale;
 }
 
+const BOND_PER_SELECTED_TRAINING = 5;
+
+function careerContextAt(turn, daysToBond, run, options) {
+  const runProgress = Math.max(0, Math.min(1, turn / run.trainingTurns));
+  const bondProgress = Math.max(
+    0,
+    Math.min(1, turn / Math.max(1, daysToBond)),
+  );
+  return {
+    fans: Number(options.fans ?? GLOBAL_UNIQUE_CONTEXT.fans) * runProgress,
+    totalBond:
+      Number(options.totalBond ?? GLOBAL_UNIQUE_CONTEXT.totalBond) * bondProgress,
+  };
+}
+
 export function calculateCareerProjection(card, options = {}) {
   const profileKey =
     options.profile && RUN_PROFILES[options.profile]
@@ -95,45 +113,13 @@ export function calculateCareerProjection(card, options = {}) {
   const facilityPace = Number(
     options.facilityPace ?? profile.facilityPace ?? 100,
   );
-  const beforeAppearance = calculateAppearance(card, globalSpecialty, {
-    ...options,
-    bond: 0,
-  });
-  const afterAppearance = calculateAppearance(card, globalSpecialty, {
-    ...options,
-    bond: 80,
-  });
   const event = eventInfo(card);
   const bondNeeded = Math.max(
     0,
-    run.deckBondTarget - Number(card.sb || 0) - event.bond,
+    run.deckBondTarget - effectiveStartingBond(card) - event.bond,
   );
   const daysToBond = Math.min(run.trainingTurns, bondNeeded / run.bondPerTurn);
   const rainbowDays = Math.max(0, run.trainingTurns - daysToBond);
-  const offDenominator = Math.max(
-    1,
-    Number(card.offstat_appearance_denominator || 4),
-  );
-  const beforeClicks = new Array(5).fill(0);
-  const afterClicks = new Array(5).fill(0);
-
-  for (let training = 0; training < 5; training++) {
-    if (training === card.type) {
-      beforeClicks[training] = beforeAppearance.specialty * daysToBond;
-      afterClicks[training] = afterAppearance.specialty * rainbowDays;
-    } else {
-      beforeClicks[training] =
-        (beforeAppearance.eachOff / offDenominator) * daysToBond;
-      afterClicks[training] =
-        (afterAppearance.eachOff / offDenominator) * rainbowDays;
-    }
-  }
-
-  const rainbowClicks = afterClicks[card.type];
-  const averageFriendshipTrainings = averageFriendshipTrainingsForCareer(
-    card,
-    rainbowClicks,
-  );
   const beforeFacilityLevel = averageFacilityLevel(0, daysToBond, facilityPace);
   const afterFacilityLevel = averageFacilityLevel(
     daysToBond,
@@ -141,33 +127,98 @@ export function calculateCareerProjection(card, options = {}) {
     facilityPace,
   );
   const vector = new Array(6).fill(0);
+  let cardBond = rainbowDays > 0 ? 80 : 0;
+  let rainbowClicks = 0;
+  let specialtyClicks = 0;
+  let offClicks = 0;
 
-  for (let training = 0; training < 5; training++) {
-    const before = calculateMarginalTraining(card, training, {
+  const addSegment = (startTurn, duration, bonded) => {
+    const midpoint = startTurn + duration / 2;
+    const dynamicContext = careerContextAt(midpoint, daysToBond, run, options);
+    const appearance = calculateAppearance(card, globalSpecialty, {
       ...options,
-      gains: run.unbondedGains[training],
-      motivation,
-      growth,
-      rainbow: false,
-      bond: 0,
-      friendshipTrainings: 0,
-      facilityLevel: beforeFacilityLevel,
+      ...dynamicContext,
+      bond: bonded ? cardBond : 0,
     });
-    addScaled(vector, before, beforeClicks[training]);
+    const expectedRainbowClicks = bonded
+      ? appearance.specialty * duration
+      : 0;
+    const friendshipTrainings =
+      rainbowClicks + expectedRainbowClicks / 2;
+    const gains = bonded ? run.bondedGains : run.unbondedGains;
 
-    const after = calculateMarginalTraining(card, training, {
-      ...options,
-      gains: run.bondedGains[training],
-      motivation,
-      growth,
-      rainbow: training === card.type,
-      bond: 80,
-      friendshipTrainings: averageFriendshipTrainings,
-      facilityLevel: afterFacilityLevel,
-    });
-    const scenarioScale = training === card.type ? run.scenarioMultiplier : 1;
-    addScaled(vector, after, afterClicks[training] * scenarioScale);
+    for (let training = 0; training < 5; training++) {
+      const specialty = training === Number(card.type);
+      const probability = specialty
+        ? appearance.specialty
+        : appearance.eachOff;
+      const marginal = calculateMarginalTraining(card, training, {
+        ...options,
+        ...dynamicContext,
+        gains: gains[training],
+        motivation,
+        growth,
+        rainbow: bonded && specialty,
+        bond: bonded ? cardBond : 0,
+        friendshipTrainings,
+        facilityLevel: facilityLevelAtTurn(midpoint, facilityPace),
+      });
+      const scenarioScale =
+        bonded && specialty ? run.scenarioMultiplier : 1;
+      addScaled(vector, marginal, probability * duration * scenarioScale);
+    }
+
+    specialtyClicks += appearance.specialty * duration;
+    offClicks += appearance.eachOff * 4 * duration;
+    if (bonded) rainbowClicks += expectedRainbowClicks;
+    return appearance.specialty + appearance.eachOff * 4;
+  };
+
+  for (let turn = 0; turn < run.trainingTurns; turn++) {
+    const turnEnd = turn + 1;
+    const preBondEnd = Math.min(turnEnd, daysToBond);
+    if (preBondEnd > turn) addSegment(turn, preBondEnd - turn, false);
+
+    let cursor = Math.max(turn, daysToBond);
+    let remaining = turnEnd - cursor;
+    while (remaining > 1e-10) {
+      const dynamicContext = careerContextAt(cursor, daysToBond, run, options);
+      const appearance = calculateAppearance(card, globalSpecialty, {
+        ...options,
+        ...dynamicContext,
+        bond: cardBond,
+      });
+      const clickRate = appearance.specialty + appearance.eachOff * 4;
+      const turnsToMaxBond =
+        cardBond < 100 && clickRate > 0
+          ? (100 - cardBond) / (BOND_PER_SELECTED_TRAINING * clickRate)
+          : Infinity;
+      const duration = Math.min(remaining, turnsToMaxBond);
+      const selectedRate = addSegment(cursor, duration, true);
+      cardBond = Math.min(
+        100,
+        cardBond + BOND_PER_SELECTED_TRAINING * selectedRate * duration,
+      );
+      cursor += duration;
+      remaining -= duration;
+      if (turnsToMaxBond <= duration + 1e-10) cardBond = 100;
+    }
   }
+
+  const beforeAppearance = calculateAppearance(card, globalSpecialty, {
+    ...options,
+    ...careerContextAt(0, daysToBond, run, options),
+    bond: 0,
+  });
+  const afterAppearance = calculateAppearance(card, globalSpecialty, {
+    ...options,
+    ...careerContextAt(run.trainingTurns, daysToBond, run, options),
+    bond: cardBond,
+  });
+  const averageFriendshipTrainings = averageFriendshipTrainingsForCareer(
+    card,
+    rainbowClicks,
+  );
 
   return {
     vector,
@@ -175,6 +226,9 @@ export function calculateCareerProjection(card, options = {}) {
     daysToBond,
     rainbowDays,
     rainbowClicks,
+    specialtyClicks,
+    offClicks,
+    finalBond: cardBond,
     appearance: afterAppearance,
     beforeAppearance,
     afterAppearance,

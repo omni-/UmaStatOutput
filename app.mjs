@@ -3,7 +3,9 @@ import {
   GLOBAL_UNIQUE_COVERAGE,
   UNIQUE_PROFILE_COVERAGE,
   facilityTrainingBonus,
+  effectiveStartingBond,
   hasFacilityLevelUnique,
+  specialUniqueUnlocked,
   resolveUniqueModifiers,
   uniqueModelWarnings,
 } from "./unique-model.mjs";
@@ -13,7 +15,9 @@ export {
   GLOBAL_UNIQUE_COVERAGE,
   UNIQUE_PROFILE_COVERAGE,
   facilityTrainingBonus,
+  effectiveStartingBond,
   hasFacilityLevelUnique,
+  specialUniqueUnlocked,
   uniqueModelWarnings,
 };
 
@@ -118,7 +122,7 @@ export function calculateAppearance(card, globalSpecialty = 0, options = {}) {
       Number(card.specialty_rate || 0) +
       Number(globalSpecialty || 0) +
       unique.conditionalSpecialtyRate) *
-    Number(card.unique_specialty || 1) *
+    (Number(card.unique_specialty || 1) - unique.lockedSpecialtyFactorDelta) *
     (Number(card.fs_specialty || 1) - unique.flattenedSpecialtyFactorDelta);
   const denominator =
     specialtyWeight + OFF_TRAINING_WEIGHT * 4 + NO_TRAINING_WEIGHT;

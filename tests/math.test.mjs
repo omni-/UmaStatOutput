@@ -6,8 +6,11 @@ import {
   calculateAppearance,
   calculateCardEV,
   calculateMarginalTraining,
+  effectiveStartingBond,
   facilityLevelAtTurn,
   facilityTrainingBonus,
+  GLOBAL_UNIQUE_CONTEXT,
+  specialUniqueUnlocked,
   turnsPerFacilityLevel,
   uniqueModelWarnings,
 } from "../app.mjs";
@@ -399,6 +402,84 @@ test("type 102 undoes the upstream rainbow bake and applies off-specialty", () =
   assert.equal(off.trainingDelta, 0.2);
 });
 
+test("a special unique stays disabled until that limit break can reach its unlock level", () => {
+  const locked = {
+    ...card,
+    rarity: 3,
+    limit_break: 0,
+    special_unique_level: 35,
+    tb: 1.1,
+    special_uniques: [{ type: 8, value: 10 }],
+  };
+  const baseline = { ...locked, tb: 1, special_uniques: [] };
+  const unlocked = { ...locked, limit_break: 1 };
+  const calculate = (candidate) =>
+    calculateMarginalTraining(candidate, 0, {
+      gains: TRAINING_PROFILES["gl-late"].gains[0],
+      motivation: 0,
+      rainbow: false,
+    });
+
+  assert.equal(specialUniqueUnlocked(locked), false);
+  assert.equal(specialUniqueUnlocked(unlocked), true);
+  assert.deepEqual(calculate(locked), calculate(baseline));
+  assert.ok(calculate(unlocked)[0] > calculate(locked)[0]);
+
+  const lockedDynamic = {
+    ...locked,
+    tb: 1.15,
+    special_uniques: [{ type: 109, value_1: 30 }],
+  };
+  const dynamicBaseline = { ...lockedDynamic, tb: 1, special_uniques: [] };
+  assert.deepEqual(calculate(lockedDynamic), calculate(dynamicBaseline));
+  assert.ok(
+    calculate({ ...lockedDynamic, limit_break: 1 })[0] >
+      calculate(lockedDynamic)[0],
+  );
+});
+
+test("locked starting-bond and type-101 flattening are removed", () => {
+  const lockedBond = {
+    ...card,
+    rarity: 3,
+    limit_break: 0,
+    special_unique_level: 35,
+    sb: 30,
+    special_uniques: [{ type: 14, value: 15 }],
+  };
+  const lockedType101 = {
+    ...card,
+    rarity: 3,
+    limit_break: 0,
+    special_unique_level: 35,
+    stat_bonus: [0, 0, 0, 0, 0, 0],
+    fs_stats: [0, 0, 0, 0, 0, 1],
+    special_uniques: [
+      { type: 101, value: 80, value_1: 30, value_2: 1 },
+    ],
+  };
+  const baseline = {
+    ...lockedType101,
+    fs_stats: [0, 0, 0, 0, 0, 0],
+    special_uniques: [],
+  };
+
+  assert.equal(effectiveStartingBond(lockedBond), 15);
+  assert.equal(effectiveStartingBond({ ...lockedBond, limit_break: 1 }), 30);
+  assert.deepEqual(
+    calculateMarginalTraining(lockedType101, 0, {
+      gains: TRAINING_PROFILES["gl-late"].gains[0],
+      rainbow: true,
+      bond: 100,
+    }),
+    calculateMarginalTraining(baseline, 0, {
+      gains: TRAINING_PROFILES["gl-late"].gains[0],
+      rainbow: true,
+      bond: 100,
+    }),
+  );
+});
+
 test("Grand Live facility pace reaches Lv5 around turn 32", () => {
   assert.equal(turnsPerFacilityLevel(100), 8);
   assert.equal(facilityLevelAtTurn(0, 100), 1);
@@ -440,7 +521,7 @@ test("starting and event bond bring a card online earlier", () => {
   assert.ok(high.rainbowDays > low.rainbowDays);
 });
 
-test("bond timing and whole-run output are numerically pinned", () => {
+test("career projection counts every off-specialty room exactly once", () => {
   const r = calculateCareerProjection(card, {
     globalSpecialty: 20,
     motivation: 0.2,
@@ -449,12 +530,68 @@ test("bond timing and whole-run output are numerically pinned", () => {
   });
   assert.equal(r.daysToBond, 20.25);
   assert.equal(r.rainbowDays, 35.75);
-  assert.ok(Math.abs(r.rainbowClicks - 286 / 23) < 1e-12);
-  assert.deepEqual(
-    r.vector.map((value) => Number(value.toFixed(9))),
-    [241.7651615,13.371602808,98.880157011,15.780475091,8.374373641,45.617886609],
+  const appearance = calculateAppearance(card, 20);
+  assert.ok(
+    Math.abs(r.offClicks - appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns) <
+      1e-10,
   );
-  assert.ok(Math.abs(r.score - 423.78965665942025) < 1e-12);
+  assert.ok(
+    Math.abs(
+      r.specialtyClicks -
+        appearance.specialty * GRAND_LIVE_RUN.trainingTurns,
+    ) < 1e-10,
+  );
+  assert.equal(r.finalBond, 100);
+  assert.ok(r.rainbowClicks < r.specialtyClicks);
+  assert.ok(r.vector.every((value) => value >= 0));
+});
+
+test("bond-100 uniques activate in late snapshots and after career bond progression", () => {
+  const thresholdUnique = {
+    ...card,
+    tb: 1,
+    fs_training: 0.2,
+    special_uniques: [
+      { type: 101, value: 100, value_1: 8, value_2: 20 },
+    ],
+  };
+  const baseline = { ...thresholdUnique, fs_training: 0, special_uniques: [] };
+  assert.equal(GLOBAL_UNIQUE_CONTEXT.bond, 100);
+  assert.ok(
+    calculateCardEV(thresholdUnique).allPlacementScore >
+      calculateCardEV(baseline).allPlacementScore,
+  );
+
+  const career = calculateCareerProjection(thresholdUnique);
+  const baselineCareer = calculateCareerProjection(baseline);
+  assert.equal(career.finalBond, 100);
+  assert.ok(career.score > baselineCareer.score);
+});
+
+test("fan and deck-bond uniques ramp during a career instead of starting maxed", () => {
+  const noBonus = { ...card, tb: 1, special_uniques: [] };
+  const alwaysTwenty = { ...noBonus, tb: 1.2 };
+  const fanRamp = {
+    ...noBonus,
+    special_uniques: [{ type: 104, value: 10000, value_1: 20 }],
+  };
+  const noTrainingBonus = { ...card, tb: 1, special_uniques: [] };
+  const alwaysFifteen = { ...noTrainingBonus, tb: 1.15 };
+  const bondRamp = {
+    ...noTrainingBonus,
+    tb: 1.15,
+    special_uniques: [{ type: 109, value_1: 30 }],
+  };
+
+  const baseFanScore = calculateCareerProjection(noBonus).score;
+  const fanScore = calculateCareerProjection(fanRamp).score;
+  assert.ok(fanScore > baseFanScore);
+  assert.ok(fanScore < calculateCareerProjection(alwaysTwenty).score);
+
+  const baseBondScore = calculateCareerProjection(noTrainingBonus).score;
+  const bondScore = calculateCareerProjection(bondRamp).score;
+  assert.ok(bondScore > baseBondScore);
+  assert.ok(bondScore < calculateCareerProjection(alwaysFifteen).score);
 });
 
 test("faster facility progression raises a type-111 card's whole-run output", () => {
