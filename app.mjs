@@ -254,7 +254,7 @@ export function supportImageUrl(id) {
 }
 
 export function portraitImageUrl(card) {
-  return card.portrait_url || supportImageUrl(card.id);
+  return supportImageUrl(card.id);
 }
 
 function fmt(value, digits = 2) {
