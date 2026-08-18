@@ -111,13 +111,15 @@ export function averageFacilityLevel(startTurn, endTurn, facilityPace = 100) {
   return weighted / (end - start);
 }
 
-export function calculateAppearance(card, globalSpecialty = 0) {
+export function calculateAppearance(card, globalSpecialty = 0, options = {}) {
+  const unique = resolveUniqueModifiers(card, card.type, options);
   const specialtyWeight =
     (BASE_SPECIALTY_WEIGHT +
       Number(card.specialty_rate || 0) +
-      Number(globalSpecialty || 0)) *
+      Number(globalSpecialty || 0) +
+      unique.conditionalSpecialtyRate) *
     Number(card.unique_specialty || 1) *
-    Number(card.fs_specialty || 1);
+    (Number(card.fs_specialty || 1) - unique.flattenedSpecialtyFactorDelta);
   const denominator =
     specialtyWeight + OFF_TRAINING_WEIGHT * 4 + NO_TRAINING_WEIGHT;
   return {
@@ -140,12 +142,13 @@ export function calculateMarginalTraining(card, trainingType, options = {}) {
 
   let trainingBonus =
     facilityTrainingBonus(card, facilityLevel) + unique.trainingDelta;
-  let motivationBonus = Number(card.mb || 1);
+  let motivationBonus = Number(card.mb || 1) + unique.motivationDelta;
   let friendshipBonus = 1;
   if (rainbow) {
     trainingBonus +=
       Number(card.fs_training || 0) + unique.rainbowTrainingDelta;
-    motivationBonus += Number(card.fs_motivation || 0);
+    motivationBonus +=
+      Number(card.fs_motivation || 0) + unique.rainbowMotivationDelta;
     friendshipBonus =
       Number(card.fs_bonus || 1) *
       (Number(card.unique_fs_bonus || 1) + unique.friendshipDelta);
@@ -154,8 +157,14 @@ export function calculateMarginalTraining(card, trainingType, options = {}) {
   const result = new Array(6).fill(0);
   for (let stat = 0; stat < 6; stat++) {
     if (!gains[stat]) continue;
-    let base = Number(gains[stat]) + Number(card.stat_bonus?.[stat] || 0);
-    if (rainbow) base += Number(card.fs_stats?.[stat] || 0);
+    let base =
+      Number(gains[stat]) +
+      Number(card.stat_bonus?.[stat] || 0) +
+      Number(unique.conditionalStatBonus[stat] || 0);
+    if (rainbow)
+      base +=
+        Number(card.fs_stats?.[stat] || 0) +
+        Number(unique.rainbowStatBonusDelta[stat] || 0);
     const withCard =
       base *
       trainingBonus *
@@ -189,7 +198,7 @@ export function calculateCardEV(card, options = {}) {
     options.facilityLevel ?? profile.facilityLevel ?? 3,
   );
   const uniqueOptions = { ...options, facilityLevel };
-  const appearance = calculateAppearance(card, globalSpecialty);
+  const appearance = calculateAppearance(card, globalSpecialty, uniqueOptions);
   const rainbowMarginal = calculateMarginalTraining(card, card.type, {
     ...uniqueOptions,
     gains: profile.gains[card.type],
