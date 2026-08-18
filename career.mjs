@@ -95,7 +95,14 @@ export function calculateCareerProjection(card, options = {}) {
   const facilityPace = Number(
     options.facilityPace ?? profile.facilityPace ?? 100,
   );
-  const appearance = calculateAppearance(card, globalSpecialty);
+  const beforeAppearance = calculateAppearance(card, globalSpecialty, {
+    ...options,
+    bond: 0,
+  });
+  const afterAppearance = calculateAppearance(card, globalSpecialty, {
+    ...options,
+    bond: 80,
+  });
   const event = eventInfo(card);
   const bondNeeded = Math.max(
     0,
@@ -112,12 +119,13 @@ export function calculateCareerProjection(card, options = {}) {
 
   for (let training = 0; training < 5; training++) {
     if (training === card.type) {
-      beforeClicks[training] = appearance.specialty * daysToBond;
-      afterClicks[training] = appearance.specialty * rainbowDays;
+      beforeClicks[training] = beforeAppearance.specialty * daysToBond;
+      afterClicks[training] = afterAppearance.specialty * rainbowDays;
     } else {
-      const chosenRate = appearance.eachOff / offDenominator;
-      beforeClicks[training] = chosenRate * daysToBond;
-      afterClicks[training] = chosenRate * rainbowDays;
+      beforeClicks[training] =
+        (beforeAppearance.eachOff / offDenominator) * daysToBond;
+      afterClicks[training] =
+        (afterAppearance.eachOff / offDenominator) * rainbowDays;
     }
   }
 
@@ -167,7 +175,9 @@ export function calculateCareerProjection(card, options = {}) {
     daysToBond,
     rainbowDays,
     rainbowClicks,
-    appearance,
+    appearance: afterAppearance,
+    beforeAppearance,
+    afterAppearance,
     eventSource: event.source,
     profileKey,
     runLabel: run.label,

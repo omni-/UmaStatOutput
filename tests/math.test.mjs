@@ -159,6 +159,187 @@ test("Mr CB type 101 stat/SP unique is fully modeled without a card-id exception
   assert.deepEqual(uniqueModelWarnings(mrCb, "gl-late"), []);
 });
 
+test("type 101 SP bonus activates at its bond threshold on every placement", () => {
+  const spUnique = {
+    ...card,
+    id: 910101,
+    stat_bonus: [0, 0, 0, 0, 0, 0],
+    fs_stats: [0, 0, 0, 0, 0, 0],
+    tb: 1,
+    mb: 1,
+    fs_bonus: 1,
+    special_uniques: [
+      { type: 101, value: 80, value_1: 30, value_2: 1 },
+    ],
+  };
+  const withoutUnique = { ...spUnique, special_uniques: [] };
+  const calculate = (candidate, trainingType, bond) =>
+    calculateMarginalTraining(candidate, trainingType, {
+      gains: TRAINING_PROFILES["gl-late"].gains[trainingType],
+      motivation: 0,
+      rainbow: false,
+      bond,
+    });
+
+  assert.deepEqual(calculate(spUnique, 0, 79), calculate(withoutUnique, 0, 79));
+  const specialtyBefore = calculate(spUnique, 0, 79);
+  const specialtyAfter = calculate(spUnique, 0, 80);
+  const offBefore = calculate(spUnique, 1, 79);
+  const offAfter = calculate(spUnique, 1, 80);
+  assert.ok(specialtyAfter[5] > specialtyBefore[5]);
+  assert.ok(offAfter[5] > offBefore[5]);
+  assert.ok(Math.abs(specialtyAfter[5] - specialtyBefore[5] - 1.05) < 1e-12);
+  assert.ok(Math.abs(offAfter[5] - offBefore[5] - 1.05) < 1e-12);
+});
+
+test("type 101 stat bonus augments an existing training component only", () => {
+  const powerUnique = {
+    ...card,
+    id: 910102,
+    stat_bonus: [0, 0, 0, 0, 0, 0],
+    fs_stats: [0, 0, 0, 0, 0, 0],
+    tb: 1,
+    mb: 1,
+    special_uniques: [
+      { type: 101, value: 80, value_1: 5, value_2: 1 },
+    ],
+  };
+  const speedBefore = calculateMarginalTraining(powerUnique, 0, {
+    gains: TRAINING_PROFILES["gl-late"].gains[0],
+    motivation: 0,
+    rainbow: false,
+    bond: 79,
+  });
+  const speedAfter = calculateMarginalTraining(powerUnique, 0, {
+    gains: TRAINING_PROFILES["gl-late"].gains[0],
+    motivation: 0,
+    rainbow: false,
+    bond: 80,
+  });
+  const witAfter = calculateMarginalTraining(powerUnique, 4, {
+    gains: TRAINING_PROFILES["gl-late"].gains[4],
+    motivation: 0,
+    rainbow: false,
+    bond: 80,
+  });
+
+  assert.ok(Math.abs(speedAfter[2] - speedBefore[2] - 1.05) < 1e-12);
+  assert.equal(witAfter[2], 0);
+});
+
+test("type 101 resolves every supported ordinary bonus family", () => {
+  const allFamilies = {
+    ...card,
+    id: 910105,
+    unique_fs_bonus: 1.1,
+    fs_motivation: 0.2,
+    fs_training: 0.15,
+    fs_specialty: 1.3,
+    fs_stats: [2, 2, 2, 2, 2, 0],
+    special_uniques: [
+      { type: 101, value: 80, value_1: 1, value_2: 10, value_3: 2, value_4: 20 },
+      { type: 101, value: 80, value_1: 8, value_2: 15, value_3: 19, value_4: 30 },
+      { type: 101, value: 80, value_1: 41, value_2: 2 },
+    ],
+  };
+  const before = resolveUniqueModifiers(allFamilies, 0, { bond: 79 });
+  const after = resolveUniqueModifiers(allFamilies, 0, { bond: 80 });
+
+  assert.equal(before.trainingDelta, 0);
+  assert.equal(before.motivationDelta, 0);
+  assert.equal(before.conditionalSpecialtyRate, 0);
+  assert.deepEqual(before.conditionalStatBonus, [0, 0, 0, 0, 0, 0]);
+  assert.ok(Math.abs(after.trainingDelta - 0.15) < 1e-12);
+  assert.ok(Math.abs(after.motivationDelta - 0.2) < 1e-12);
+  assert.ok(Math.abs(after.friendshipDelta) < 1e-12);
+  assert.equal(after.conditionalSpecialtyRate, 30);
+  assert.deepEqual(after.conditionalStatBonus, [2, 2, 2, 2, 2, 0]);
+
+  const rawOnly = { ...allFamilies, fs_specialty: 1 };
+  const flattenedBefore = calculateAppearance(allFamilies, 0, { bond: 79 });
+  const rawBefore = calculateAppearance(rawOnly, 0, { bond: 79 });
+  const flattenedAfter = calculateAppearance(allFamilies, 0, { bond: 80 });
+  const rawAfter = calculateAppearance(rawOnly, 0, { bond: 80 });
+  assert.deepEqual(flattenedBefore, rawBefore);
+  assert.deepEqual(flattenedAfter, rawAfter);
+  assert.ok(flattenedAfter.specialty > flattenedBefore.specialty);
+});
+
+test("Mr CB type 101 grants post-bond SP on off-specialty career placements", () => {
+  const mrCb = {
+    ...card,
+    id: 30097,
+    type: 4,
+    fs_stats: [0, 0, 0, 0, 1, 1],
+    special_uniques: [
+      { type: 101, value: 80, value_1: 7, value_2: 1, value_3: 30, value_4: 1 },
+    ],
+  };
+  const oldFlattenedBehavior = { ...mrCb, special_uniques: [] };
+  const offBefore = calculateMarginalTraining(mrCb, 0, {
+    gains: GRAND_LIVE_RUN.bondedGains[0],
+    rainbow: false,
+    bond: 79,
+  });
+  const offAfter = calculateMarginalTraining(mrCb, 0, {
+    gains: GRAND_LIVE_RUN.bondedGains[0],
+    rainbow: false,
+    bond: 80,
+  });
+  const fixedRun = calculateCareerProjection(mrCb);
+  const buggyRun = calculateCareerProjection(oldFlattenedBehavior);
+
+  assert.ok(offAfter[5] > offBefore[5]);
+  assert.ok(fixedRun.vector[5] > buggyRun.vector[5]);
+});
+
+test("type 101 upstream stat flattening is removed before raw bonuses apply", () => {
+  const rawOnly = {
+    ...card,
+    id: 910103,
+    stat_bonus: [0, 0, 0, 0, 0, 0],
+    fs_stats: [0, 0, 0, 0, 0, 0],
+    special_uniques: [
+      { type: 101, value: 80, value_1: 30, value_2: 1 },
+    ],
+  };
+  const flattened = { ...rawOnly, fs_stats: [0, 0, 0, 0, 0, 1] };
+  const calculate = (candidate, bond) =>
+    calculateMarginalTraining(candidate, 0, {
+      gains: TRAINING_PROFILES["gl-late"].gains[0],
+      rainbow: true,
+      bond,
+    });
+
+  assert.deepEqual(calculate(flattened, 80), calculate(rawOnly, 80));
+  assert.deepEqual(calculate(flattened, 79), calculate(rawOnly, 79));
+});
+
+test("ordinary fs_stats remain friendship-only", () => {
+  const friendshipOnly = {
+    ...card,
+    id: 910104,
+    stat_bonus: [0, 0, 0, 0, 0, 0],
+    fs_stats: [0, 0, 1, 0, 0, 0],
+    special_uniques: [],
+  };
+  const withoutFriendshipStat = {
+    ...friendshipOnly,
+    fs_stats: [0, 0, 0, 0, 0, 0],
+  };
+  const calculate = (candidate, rainbow) =>
+    calculateMarginalTraining(candidate, 0, {
+      gains: TRAINING_PROFILES["gl-late"].gains[0],
+      rainbow,
+    });
+
+  assert.ok(calculate(friendshipOnly, true)[2] > calculate(withoutFriendshipStat, true)[2]);
+  assert.deepEqual(
+    calculate(friendshipOnly, false),
+    calculate(withoutFriendshipStat, false),
+  );
+});
+
 test("type 112 is disclosed by mechanic rather than support id", () => {
   const festaLike = {
     ...card,

@@ -43,6 +43,14 @@ const OUTSIDE_METRIC_TYPES = new Map([
 ]);
 
 const TYPE_101_SUPPORTED_BONUSES = new Set([1, 2, 3, 4, 5, 6, 7, 8, 19, 30, 41]);
+const TYPE_101_STAT_INDEX = new Map([
+  [3, 0],
+  [4, 1],
+  [5, 2],
+  [6, 3],
+  [7, 4],
+  [30, 5],
+]);
 const TYPE_101_OUTSIDE_BONUSES = new Map([
   [31, "Wit energy recovery from the bond-gated unique is outside the current action-economy model"],
 ]);
@@ -80,6 +88,85 @@ function context(options = {}) {
   };
 }
 
+function type101BonusPairs(effect) {
+  return [
+    [n(effect?.value_1), n(effect?.value_2)],
+    [n(effect?.value_3), n(effect?.value_4)],
+  ].filter(([bonusType, value]) => bonusType > 0 && value !== 0);
+}
+
+function type101Modifiers(card, bond) {
+  const flattened = {
+    friendship: 0,
+    motivation: 0,
+    training: 0,
+    specialty: 0,
+    stats: new Array(6).fill(0),
+  };
+  const active = {
+    friendship: 0,
+    motivation: 0,
+    training: 0,
+    specialty: 0,
+    stats: new Array(6).fill(0),
+  };
+
+  for (const effect of effects(card)) {
+    if (Number(effect?.type) !== 101) continue;
+    const destination = bond >= n(effect.value, 80) ? active : null;
+    for (const [bonusType, value] of type101BonusPairs(effect)) {
+      const statIndex = TYPE_101_STAT_INDEX.get(bonusType);
+      if (statIndex !== undefined) {
+        flattened.stats[statIndex] += value;
+        if (destination) destination.stats[statIndex] += value;
+      } else if (bonusType === 41) {
+        for (let stat = 0; stat < 5; stat++) {
+          flattened.stats[stat] += value;
+          if (destination) destination.stats[stat] += value;
+        }
+      } else if (bonusType === 1) {
+        flattened.friendship += value / 100;
+        if (destination) destination.friendship += value / 100;
+      } else if (bonusType === 2) {
+        flattened.motivation += value / 100;
+        if (destination) destination.motivation += value / 100;
+      } else if (bonusType === 8) {
+        flattened.training += value / 100;
+        if (destination) destination.training += value / 100;
+      } else if (bonusType === 19) {
+        flattened.specialty += value / 100;
+        if (destination) destination.specialty += value;
+      }
+    }
+  }
+
+  // Euophrys flattens type 101 into friendship-only fields. Remove only the
+  // portion that is actually present, so raw-only fixtures are not over-corrected.
+  const baked = {
+    friendship: Math.min(
+      flattened.friendship,
+      Math.max(0, n(card?.unique_fs_bonus, 1) - 1),
+    ),
+    motivation: Math.min(
+      flattened.motivation,
+      Math.max(0, n(card?.fs_motivation)),
+    ),
+    training: Math.min(
+      flattened.training,
+      Math.max(0, n(card?.fs_training)),
+    ),
+    specialty: Math.min(
+      flattened.specialty,
+      Math.max(0, n(card?.fs_specialty, 1) - 1),
+    ),
+    stats: flattened.stats.map((value, stat) =>
+      Math.min(value, Math.max(0, n(card?.fs_stats?.[stat]))),
+    ),
+  };
+
+  return { active, baked };
+}
+
 export function specialUniqueTypes(card) {
   return effects(card)
     .map((effect) => Number(effect?.type))
@@ -103,9 +190,13 @@ export function facilityTrainingBonus(card, facilityLevel = 3) {
 export function resolveUniqueModifiers(card, trainingType, options = {}) {
   const uniqueContext = context(options);
   const rainbow = Boolean(options.rainbow);
-  let trainingDelta = 0;
-  let rainbowTrainingDelta = 0;
-  let friendshipDelta = 0;
+  const type101 = type101Modifiers(card, uniqueContext.bond);
+  let trainingDelta = type101.active.training;
+  let rainbowTrainingDelta = -type101.baked.training;
+  let motivationDelta = type101.active.motivation;
+  let rainbowMotivationDelta = -type101.baked.motivation;
+  let friendshipDelta =
+    type101.active.friendship - type101.baked.friendship;
 
   for (const effect of effects(card)) {
     const type = Number(effect?.type);
@@ -189,7 +280,13 @@ export function resolveUniqueModifiers(card, trainingType, options = {}) {
   return {
     trainingDelta,
     rainbowTrainingDelta,
+    motivationDelta,
+    rainbowMotivationDelta,
     friendshipDelta,
+    conditionalStatBonus: type101.active.stats,
+    rainbowStatBonusDelta: type101.baked.stats.map((value) => -value),
+    conditionalSpecialtyRate: type101.active.specialty,
+    flattenedSpecialtyFactorDelta: type101.baked.specialty,
     context: uniqueContext,
   };
 }
