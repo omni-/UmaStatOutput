@@ -7,7 +7,7 @@ export const UNIQUE_PROFILE_COVERAGE = {
 };
 
 export const GLOBAL_UNIQUE_CONTEXT = {
-  bond: 80,
+  bond: 100,
   deckTypes: 5,
   fans: 200000,
   currentEnergy: 50,
@@ -60,8 +60,26 @@ function n(value, fallback = 0) {
   return Number.isFinite(result) ? result : fallback;
 }
 
-function effects(card) {
+function allEffects(card) {
   return Array.isArray(card?.special_uniques) ? card.special_uniques : [];
+}
+
+export function maxSupportLevel(card) {
+  const baseLevel = { 1: 20, 2: 25, 3: 30 }[Number(card?.rarity)];
+  const limitBreak = Number(card?.limit_break);
+  if (!baseLevel || !Number.isFinite(limitBreak)) return null;
+  return baseLevel + Math.max(0, Math.min(4, limitBreak)) * 5;
+}
+
+export function specialUniqueUnlocked(card) {
+  const unlockLevel = Number(card?.special_unique_level);
+  const supportLevel = maxSupportLevel(card);
+  if (!Number.isFinite(unlockLevel) || supportLevel === null) return true;
+  return supportLevel >= unlockLevel;
+}
+
+function effects(card) {
+  return specialUniqueUnlocked(card) ? allEffects(card) : [];
 }
 
 function hasMetadata(card) {
@@ -111,9 +129,10 @@ function type101Modifiers(card, bond) {
     stats: new Array(6).fill(0),
   };
 
-  for (const effect of effects(card)) {
+  const unlocked = specialUniqueUnlocked(card);
+  for (const effect of allEffects(card)) {
     if (Number(effect?.type) !== 101) continue;
-    const destination = bond >= n(effect.value, 80) ? active : null;
+    const destination = unlocked && bond >= n(effect.value, 80) ? active : null;
     for (const [bonusType, value] of type101BonusPairs(effect)) {
       const statIndex = TYPE_101_STAT_INDEX.get(bonusType);
       if (statIndex !== undefined) {
@@ -167,8 +186,74 @@ function type101Modifiers(card, bond) {
   return { active, baked };
 }
 
+function lockedFlattenedModifiers(card) {
+  const result = {
+    training: 0,
+    motivation: 0,
+    friendship: 0,
+    rainbowTraining: 0,
+    rainbowMotivation: 0,
+    stats: new Array(6).fill(0),
+    specialtyFactor: 0,
+    startingBond: 0,
+  };
+  if (specialUniqueUnlocked(card)) return result;
+
+  const available = {
+    training: Math.max(0, n(card?.tb, 1) - 1),
+    motivation: Math.max(0, n(card?.mb, 1) - 1),
+    friendship: Math.max(0, n(card?.unique_fs_bonus, 1) - 1),
+    rainbowTraining: Math.max(0, n(card?.fs_training)),
+    rainbowMotivation: Math.max(0, n(card?.fs_motivation)),
+    specialtyFactor: Math.max(0, n(card?.unique_specialty, 1) - 1),
+    startingBond: Math.max(0, n(card?.sb)),
+    stats: new Array(6)
+      .fill(0)
+      .map((_, stat) => Math.max(0, n(card?.stat_bonus?.[stat]))),
+  };
+  const subtract = (field, value) => {
+    const amount = Math.min(available[field], Math.max(0, value));
+    result[field] -= amount;
+    available[field] -= amount;
+  };
+  const subtractStat = (stat, value) => {
+    const amount = Math.min(available.stats[stat], Math.max(0, value));
+    result.stats[stat] -= amount;
+    available.stats[stat] -= amount;
+  };
+
+  for (const effect of allEffects(card)) {
+    const type = Number(effect?.type);
+    const value = n(effect?.value);
+    if (type === 1) subtract("friendship", value / 100);
+    else if (type === 2) subtract("motivation", value / 100);
+    else if (type >= 3 && type <= 7) subtractStat(type - 3, value);
+    else if (type === 8) subtract("training", value / 100);
+    else if (type === 14) subtract("startingBond", value);
+    else if (type === 19) {
+      const amount = Math.min(
+        available.specialtyFactor,
+        Math.max(0, value / 100),
+      );
+      result.specialtyFactor += amount;
+      available.specialtyFactor -= amount;
+    } else if (type === 30) subtractStat(5, value);
+    else if (type === 32) subtract("rainbowMotivation", value / 100);
+    else if (type === 102) subtract("rainbowTraining", 0.2);
+    else if (type === 107) subtract("friendship", 0.07);
+    else if (type === 108) subtract("training", 0.12);
+    else if (type === 109 || type === 111) subtract("training", 0.15);
+  }
+  return result;
+}
+
+export function effectiveStartingBond(card) {
+  const locked = lockedFlattenedModifiers(card);
+  return Math.max(0, n(card?.sb) + locked.startingBond);
+}
+
 export function specialUniqueTypes(card) {
-  return effects(card)
+  return allEffects(card)
     .map((effect) => Number(effect?.type))
     .filter(Number.isFinite);
 }
@@ -191,12 +276,14 @@ export function resolveUniqueModifiers(card, trainingType, options = {}) {
   const uniqueContext = context(options);
   const rainbow = Boolean(options.rainbow);
   const type101 = type101Modifiers(card, uniqueContext.bond);
-  let trainingDelta = type101.active.training;
-  let rainbowTrainingDelta = -type101.baked.training;
-  let motivationDelta = type101.active.motivation;
-  let rainbowMotivationDelta = -type101.baked.motivation;
+  const locked = lockedFlattenedModifiers(card);
+  let trainingDelta = type101.active.training + locked.training;
+  let rainbowTrainingDelta = -type101.baked.training + locked.rainbowTraining;
+  let motivationDelta = type101.active.motivation + locked.motivation;
+  let rainbowMotivationDelta =
+    -type101.baked.motivation + locked.rainbowMotivation;
   let friendshipDelta =
-    type101.active.friendship - type101.baked.friendship;
+    type101.active.friendship - type101.baked.friendship + locked.friendship;
 
   for (const effect of effects(card)) {
     const type = Number(effect?.type);
@@ -283,10 +370,13 @@ export function resolveUniqueModifiers(card, trainingType, options = {}) {
     motivationDelta,
     rainbowMotivationDelta,
     friendshipDelta,
-    conditionalStatBonus: type101.active.stats,
+    conditionalStatBonus: type101.active.stats.map(
+      (value, stat) => value + locked.stats[stat],
+    ),
     rainbowStatBonusDelta: type101.baked.stats.map((value) => -value),
     conditionalSpecialtyRate: type101.active.specialty,
     flattenedSpecialtyFactorDelta: type101.baked.specialty,
+    lockedSpecialtyFactorDelta: locked.specialtyFactor,
     context: uniqueContext,
   };
 }
