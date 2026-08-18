@@ -43,7 +43,7 @@ jobs:
       - name: Build static site and sync Global support data
         run: |
           mkdir -p _site
-          cp index.html app.mjs career.mjs styles.css career.css _site/
+          cp index.html app.mjs career.mjs career-core.mjs future.mjs styles.css career.css _site/
           python3 scripts/sync_cards.py --output _site/data/cards.json
 
       - name: Configure Pages
