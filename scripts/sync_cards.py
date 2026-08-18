@@ -124,7 +124,8 @@ def fetch_umapyoi_metadata(list_url:str,target_ids:set[int]):
         if not support_rows:raise ValueError("support list contained no rows")
         api_root=list_url.rsplit("/support",1)[0]
         try:
-            character_rows=rows_from_payload(fetch_json(f"{api_root}/character/list"))
+            # /character/info includes game_id; /character/list does not expose the join key we need.
+            character_rows=rows_from_payload(fetch_json(f"{api_root}/character/info"))
             titles,names,portraits=join_umapyoi_metadata(support_rows,character_rows,target_ids)
         except Exception as exc:
             print(f"WARN: Umapyoi character enrichment unavailable: {exc}",file=sys.stderr)

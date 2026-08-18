@@ -1,6 +1,7 @@
 import importlib.util
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 FIXTURES=Path(__file__).parent/"fixtures"
 SPEC=importlib.util.spec_from_file_location("sync_cards",ROOT/"scripts"/"sync_cards.py")
@@ -31,6 +32,16 @@ class SyncCardsTests(unittest.TestCase):
         support_rows=[{"id":30147,"chara_id":1061,"title_en":"[The Frontier]"}]
         character_rows=[{"id":9999,"game_id":1061,"name_en":"Jungle Pocket","name_jp":"ジャングルポケット","thumb_img":"https://example.test/jungle.png"}]
         titles,names,portraits=sync_cards.join_umapyoi_metadata(support_rows,character_rows,{30147})
+        self.assertEqual(titles[30147],"The Frontier");self.assertEqual(names[30147],"Jungle Pocket");self.assertEqual(portraits[30147],"https://example.test/jungle.png")
+    def test_umapyoi_character_info_endpoint_supplies_english_name(self):
+        support_rows=[{"id":30147,"chara_id":1061,"title_en":"[The Frontier]"}]
+        character_rows=[{"id":157,"game_id":1061,"name_en":"Jungle Pocket","thumb_img":"https://example.test/jungle.png"}]
+        def fake_fetch(url):
+            if url.endswith("/support"):return support_rows
+            if url.endswith("/character/info"):return character_rows
+            raise AssertionError(f"Unexpected URL: {url}")
+        with patch.object(sync_cards,"fetch_json",side_effect=fake_fetch):
+            titles,names,portraits=sync_cards.fetch_umapyoi_metadata("https://api.umapyoi.net/api/v1/support",{30147})
         self.assertEqual(titles[30147],"The Frontier");self.assertEqual(names[30147],"Jungle Pocket");self.assertEqual(portraits[30147],"https://example.test/jungle.png")
     def test_future_card_uses_umapyoi_english_name_without_overriding_global_names(self):
         required={"type":0,"rarity":3,"limit_break":4,"specialty_rate":80}
