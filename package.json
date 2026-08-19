@@ -5,7 +5,7 @@
   "description": "Static calculator for comparing Umamusume support cards by placement-weighted training output.",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test \"tests/*.test.mjs\"",
     "test:python": "python3 -m unittest discover -s tests -p \"test_*.py\"",
     "sync": "python3 scripts/sync_cards.py --output data/cards.json --images img",
     "serve": "python3 scripts/serve.py --port 8000"

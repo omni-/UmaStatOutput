@@ -85,6 +85,8 @@ npm test
 
 `npm test` covers the model, the run and deck projections, the shared settings and share links, and the contract between `index.html`'s element ids and the modules that query them. `npm run test:python` covers the data sync.
 
+The `python3` commands here match CI; on Windows the interpreter is usually just `python`.
+
 ## Disclaimer
 
 This is an unofficial fan tool. Umamusume: Pretty Derby and its game data are the property of Cygames. Upstream data/model credit belongs to the contributors of Euophrys/umamusume-tierlist.
