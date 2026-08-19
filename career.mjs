@@ -127,6 +127,10 @@ export function calculateCareerProjection(card, options = {}) {
     facilityPace,
   );
   const vector = new Array(6).fill(0);
+  const offSelectionDenominator = Math.max(
+    1,
+    Number(card.offstat_appearance_denominator || 4),
+  );
   let cardBond = rainbowDays > 0 ? 80 : 0;
   let rainbowClicks = 0;
   let specialtyClicks = 0;
@@ -151,7 +155,7 @@ export function calculateCareerProjection(card, options = {}) {
       const specialty = training === Number(card.type);
       const probability = specialty
         ? appearance.specialty
-        : appearance.eachOff;
+        : appearance.eachOff / offSelectionDenominator;
       const marginal = calculateMarginalTraining(card, training, {
         ...options,
         ...dynamicContext,
@@ -169,9 +173,13 @@ export function calculateCareerProjection(card, options = {}) {
     }
 
     specialtyClicks += appearance.specialty * duration;
-    offClicks += appearance.eachOff * 4 * duration;
+    offClicks +=
+      (appearance.eachOff * 4 * duration) / offSelectionDenominator;
     if (bonded) rainbowClicks += expectedRainbowClicks;
-    return appearance.specialty + appearance.eachOff * 4;
+    return (
+      appearance.specialty +
+      (appearance.eachOff * 4) / offSelectionDenominator
+    );
   };
 
   for (let turn = 0; turn < run.trainingTurns; turn++) {
@@ -188,7 +196,9 @@ export function calculateCareerProjection(card, options = {}) {
         ...dynamicContext,
         bond: cardBond,
       });
-      const clickRate = appearance.specialty + appearance.eachOff * 4;
+      const clickRate =
+        appearance.specialty +
+        (appearance.eachOff * 4) / offSelectionDenominator;
       const turnsToMaxBond =
         cardBond < 100 && clickRate > 0
           ? (100 - cardBond) / (BOND_PER_SELECTED_TRAINING * clickRate)

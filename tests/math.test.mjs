@@ -521,7 +521,7 @@ test("starting and event bond bring a card online earlier", () => {
   assert.ok(high.rainbowDays > low.rainbowDays);
 });
 
-test("career projection counts every off-specialty room exactly once", () => {
+test("career projection discounts off-specialty appearances by selection rate", () => {
   const r = calculateCareerProjection(card, {
     globalSpecialty: 20,
     motivation: 0.2,
@@ -531,9 +531,17 @@ test("career projection counts every off-specialty room exactly once", () => {
   assert.equal(r.daysToBond, 20.25);
   assert.equal(r.rainbowDays, 35.75);
   const appearance = calculateAppearance(card, 20);
+  const offSelectionDenominator = card.offstat_appearance_denominator;
   assert.ok(
-    Math.abs(r.offClicks - appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns) <
+    Math.abs(
+      r.offClicks -
+        (appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns) /
+          offSelectionDenominator,
+    ) <
       1e-10,
+  );
+  assert.ok(
+    r.offClicks < appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns,
   );
   assert.ok(
     Math.abs(
