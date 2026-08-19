@@ -5,6 +5,7 @@ import {
   normalizeStatWeights,
   averageFacilityLevel,
   DEFAULT_PASSIVE_BOND_PER_TURN,
+  MIN_SEGMENT_TURNS,
   effectiveStartingBond,
   effectiveStartingStats,
   facilityLevelAtTurn,
@@ -172,13 +173,20 @@ export function calculateCareerProjection(card, options = {}) {
       bond < RAINBOW_BOND_THRESHOLD && bondRate > 0
         ? (RAINBOW_BOND_THRESHOLD - bond) / bondRate
         : Infinity;
+    // Too close to the threshold to integrate over: take the crossing as done
+    // so the loop cannot stall on a segment that moves nothing.
+    if (turnsToBond <= MIN_SEGMENT_TURNS) {
+      bond = RAINBOW_BOND_THRESHOLD;
+      bondedAtTurn = bondedAtTurn === null ? turn : bondedAtTurn;
+      continue;
+    }
 
     const duration = Math.min(
       run.trainingTurns - turn,
       MAX_SEGMENT_TURNS,
       nextFacilityTurn - turn,
       nextGainsTurn - turn,
-      turnsToBond > 0 ? turnsToBond : MAX_SEGMENT_TURNS,
+      turnsToBond,
     );
     if (!(duration > 0)) break;
 

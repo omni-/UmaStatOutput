@@ -1,5 +1,6 @@
 import {
   GLOBAL_UNIQUE_CONTEXT,
+  MIN_SEGMENT_TURNS,
   RAINBOW_BOND_THRESHOLD,
   TRAINING_PROFILES,
   calculateAppearance,
@@ -232,7 +233,8 @@ export function calculateDeckProjection(cards, options = {}) {
       if (bonds[index] >= RAINBOW_BOND_THRESHOLD || bondRates[index] <= 0) continue;
       const turnsToBond =
         (RAINBOW_BOND_THRESHOLD - bonds[index]) / bondRates[index];
-      if (turnsToBond > 0) duration = Math.min(duration, turnsToBond);
+      if (turnsToBond > MIN_SEGMENT_TURNS) duration = Math.min(duration, turnsToBond);
+      else bonds[index] = RAINBOW_BOND_THRESHOLD;
     }
     if (!(duration > 0)) break;
 

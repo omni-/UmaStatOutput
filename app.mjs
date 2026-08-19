@@ -90,6 +90,12 @@ export const RAINBOW_BOND_THRESHOLD = 80;
 // standing on the training the player picked.
 export const DEFAULT_PASSIVE_BOND_PER_TURN = 0.5;
 
+// Both projections cut a segment short at the turn a card crosses into
+// rainbowing. When the remaining bond gap is this small, the crossing is taken
+// as done rather than integrated over a segment too short to move the state —
+// which would otherwise leave the loop advancing by nothing.
+export const MIN_SEGMENT_TURNS = 1e-6;
+
 export const STORAGE_KEY = "uma-stat-output:v2";
 
 export function clampFacilityLevel(value) {
