@@ -25,13 +25,14 @@ const FLATTENED_TRAINING_TYPES = new Set([
   1, 2, 3, 4, 5, 6, 7, 8, 14, 19, 30, 32,
 ]);
 
+const SILENTLY_IGNORED_TYPES = new Set([15]);
+
 const OUTSIDE_METRIC_TYPES = new Map([
   [9, "initial Speed from the unique is outside the training-output metric"],
   [10, "initial Stamina from the unique is outside the training-output metric"],
   [11, "initial Power from the unique is outside the training-output metric"],
   [12, "initial Guts from the unique is outside the training-output metric"],
   [13, "initial Wit from the unique is outside the training-output metric"],
-  [15, "race-bonus value from the unique is outside the training-output metric"],
   [18, "hint-rate value from the unique is outside the training-output metric"],
   [25, "energy-gain value from the unique is outside the current action-economy model"],
   [26, "event-effect-size value from the unique is outside the training-output metric"],
@@ -438,7 +439,11 @@ export function uniqueModelWarnings(card, profileKey = "gl-late") {
       warnings.push(...type101Warnings(effect));
       continue;
     }
-    if (SUPPORTED_SPECIAL_TYPES.has(type) || FLATTENED_TRAINING_TYPES.has(type))
+    if (
+      SUPPORTED_SPECIAL_TYPES.has(type) ||
+      FLATTENED_TRAINING_TYPES.has(type) ||
+      SILENTLY_IGNORED_TYPES.has(type)
+    )
       continue;
     const outside = OUTSIDE_METRIC_TYPES.get(type);
     if (outside) {

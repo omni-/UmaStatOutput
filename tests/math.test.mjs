@@ -353,6 +353,18 @@ test("type 112 is disclosed by mechanic rather than support id", () => {
   assert.match(uniqueModelWarnings(festaLike, "gl-late")[0], /failure-protection/);
 });
 
+test("race bonus uniques are silently excluded from the training model", () => {
+  const raceBonus = {
+    ...card,
+    id: 777778,
+    special_uniques: [
+      { type: 2, value: 15 },
+      { type: 15, value: 5 },
+    ],
+  };
+  assert.deepEqual(uniqueModelWarnings(raceBonus, "gl-late"), []);
+});
+
 test("unknown unique types retain scenario coverage warning", () => {
   const future = {
     ...card,
