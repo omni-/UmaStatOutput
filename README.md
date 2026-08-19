@@ -6,20 +6,32 @@ Most support-card calculators show how strong a training click is *after the car
 
 ## What it calculates
 
-For each selected five-training-type support card, the site reports:
+For each selected support card, the site reports:
 
 - effective specialty weight and preferred-training appearance probability;
 - isolated rainbow marginal output;
 - **Specialty EV** = preferred appearance probability × rainbow marginal output;
-- **All-placement EV** = Specialty EV + non-rainbow marginal output across the other four training rooms.
+- **All-placement EV** = Specialty EV + non-rainbow marginal output across the other training rooms.
 
-The default ranking is Specialty EV because it directly answers “how much expected rainbow training output does this card create after accounting for 得意率?”
+Both are shown in the comparison table and either can be the ranking metric. Specialty EV is the default because it directly answers “how much expected rainbow training output does this card create after accounting for 得意率?”. Friend and group supports have no specialty training at all, so All-placement EV is the only ranking that describes them.
 
-The bond-aware run projection estimates when each card begins rainbowing from Starting Bond and support-event bond. It is deliberately **not** a full career/deck simulator: multi-card friendship multiplication, support-event stat rewards, race bonuses, scenario-specific turn choice, and other cards' placement remain outside the model. Context-dependent unique effects are flagged in the UI rather than silently guessed.
+Every ranking runs through per-stat weights, so a build that does not want Guts can stop crediting cards for producing it.
+
+Three views sit on the same settings:
+
+- the **per-click comparison**, an isolated-card model with a configurable number of anonymous supports sharing the click;
+- the **run projection**, which follows one card's bond across a 56-turn career and reports what it produces, including when it starts rainbowing and where that bond estimate came from;
+- the **deck projection**, which enumerates every way up to six selected supports can spread across the five training rooms each turn, assumes the player takes the best room, and prices each support by what the whole deck loses without it.
+
+Both run views count each support's one-time event rewards, scaled by its event-effect size and listed per card rather than folded anonymously into the total. Those figures are the best reasonable event route Euophrys records, not an expectation over branches, and events with random outcomes or skill rewards are not represented at all; the toggle above the run table turns them off.
+
+Race bonuses, hints, energy converting into extra actions, and scenario links remain outside all three views. Context-dependent unique effects are flagged in the UI rather than silently guessed.
 
 ## Data source
 
-The deploy workflow downloads the current Global support-card export from [`Euophrys/umamusume-tierlist`](https://github.com/Euophrys/umamusume-tierlist), whose `gl.js` is generated from the Global game's `master.mdb`. The upstream project is MIT-licensed.
+The deploy workflow downloads the current Global support-card export from [`Euophrys/umamusume-tierlist`](https://github.com/Euophrys/umamusume-tierlist), whose `gl.js` is generated from the Global game's `master.mdb`. The upstream project is MIT-licensed. Raw unique-effect metadata comes from [`niiyant/uma--guide`](https://github.com/niiyant/uma--guide); a build that cannot collect unique records for at least `--min-unique-rows` supports fails rather than publishing a dataset in which every card is silently missing its unique.
+
+Card art and character portraits are copied into the deploy artifact by `--images`, so the published page serves its own images and only falls back to an upstream host for a file that could not be downloaded. `--images` must point at the site's `img/` directory, which is the path the page asks for.
 
 The site does **not** need a backend. Every deploy (and a daily scheduled run) downloads and normalizes the upstream data into the GitHub Pages artifact.
 
@@ -34,7 +46,16 @@ P(each off-type room) = 100 / same denominator
 P(no training) = 50 / same denominator
 ```
 
-Training output uses the same isolated-card multiplicative structure as Euophrys' calculator. Grand Live late-run and summer base training values, its +20 global Specialty Priority, and its rainbow-only 1.4 multiplier are taken from the Global scenario configuration.
+`friendshipSpecialty` is a bonded-state effect, so it only enters the weight once the card is at 80 bond. Below that the card appears at its base rate, which is what the pre-rainbow phase of a run actually looks like.
+
+Training output uses the same multiplicative structure as Euophrys' calculator. Grand Live late-run and summer base training values, its +20 global Specialty Priority, and its rainbow-only 1.4 multiplier are taken from the Global scenario configuration.
+
+Two places deliberately diverge from upstream:
+
+- **A card's marginal value is measured against the same click without it**, and that baseline keeps the trainee's own mood and growth multipliers. Upstream's solo-card branch subtracts the raw base gain instead, which credits every card with the trainee's mood and growth on top of its real contribution — an inflation proportional to the base gains of the card's training type, so it distorts comparisons across types and grows as mood and growth rise.
+- **Bond timing is driven by how often the card is actually picked** (5 bond per selected training, plus a configurable trickle from outings and events) rather than by a fixed deck-wide bond rate. Specialty Priority therefore changes when a card starts rainbowing, which is the main thing the site exists to measure.
+
+Euophrys flattens several context-dependent uniques into dedicated card fields (`crowd_bonus`, `highlander_*`, `fan_bonus`, `fs_ramp`). Each has a raw effect type that models the same mechanic, so the flattened value is used only when the card's raw metadata never declared that effect — never on top of it, and never while the card's unique is still locked at that limit break. `wisdom_recovery` has no training-output equivalent and is disclosed as outside the metric instead.
 
 ## GitHub Pages
 
@@ -44,24 +65,29 @@ If this is the repository's first Pages deployment, open **Settings → Pages �
 
 ## Local development
 
-Generate data:
+Generate data and card art:
 
 ```bash
-mkdir -p data
-python3 scripts/sync_cards.py --output data/cards.json
+python3 scripts/sync_cards.py --output data/cards.json --images img
 ```
 
-Then serve the repository root with any static HTTP server, for example:
+Then serve the repository root:
 
 ```bash
-python3 -m http.server 8000
+python3 scripts/serve.py --port 8000
 ```
 
-Run the math tests with:
+Any static server works, as long as it sends `.mjs` as JavaScript — `python3 -m http.server` does not on every platform, which is the only thing `scripts/serve.py` fixes.
+
+Run the tests:
 
 ```bash
-node --test tests/math.test.mjs
+npm test
 ```
+
+`npm test` covers the model, the run and deck projections, the shared settings and share links, and the contract between `index.html`'s element ids and the modules that query them. `npm run test:python` covers the data sync.
+
+The `python3` commands here match CI; on Windows the interpreter is usually just `python`.
 
 ## Disclaimer
 

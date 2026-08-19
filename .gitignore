@@ -1,0 +1,6 @@
+# Generated locally by scripts/sync_cards.py and by the Pages build.
+data/
+img/
+_site/
+node_modules/
+__pycache__/

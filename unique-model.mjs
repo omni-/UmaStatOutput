@@ -43,6 +43,20 @@ const OUTSIDE_METRIC_TYPES = new Map([
   [112, "failure-protection value is outside the current training-output model"],
 ]);
 
+// Euophrys flattens a handful of context-dependent uniques into dedicated card
+// fields instead of leaving them in the raw effect list. Each field has a raw
+// effect type that models the same mechanic, so the flattened value is only a
+// fallback for cards whose raw metadata never declared that effect.
+const FLATTENED_FIELD_EQUIVALENT_TYPES = {
+  crowd_bonus: 110,
+  highlander_training: 103,
+  fan_bonus: 104,
+  fs_ramp: 106,
+};
+
+const FAN_BONUS_PER_POINT = 10000;
+const FAN_BONUS_MAX_POINTS = 20;
+
 const TYPE_101_SUPPORTED_BONUSES = new Set([1, 2, 3, 4, 5, 6, 7, 8, 19, 30, 41]);
 const TYPE_101_STAT_INDEX = new Map([
   [3, 0],
@@ -154,13 +168,12 @@ function type101Modifiers(card, bond) {
         flattened.training += value / 100;
         if (destination) destination.training += value / 100;
       } else if (bonusType === 19) {
-        // The two sides intentionally use different units. `flattened` is
-        // compared against `fs_specialty - 1`, a multiplier delta, so the raw
-        // percentage is scaled down. `active` flows into
-        // `conditionalSpecialtyRate`, which is summed with the raw specialty
-        // rate points in `calculateAppearance`, so it stays unscaled.
+        // Specialty Priority arrives as a percentage multiplier, not as weight
+        // points: the data pairs `type 19 value 20` with `unique_specialty 1.2`
+        // and this bond-gated `40` with `fs_specialty 1.4`. Both sides are
+        // multiplier deltas, so both are scaled the same way.
         flattened.specialty += value / 100;
-        if (destination) destination.specialty += value;
+        if (destination) destination.specialty += value / 100;
       }
     }
   }
@@ -267,6 +280,70 @@ function lockedFlattenedModifiers(card) {
   return result;
 }
 
+function declaresEffectType(card, effectType) {
+  return allEffects(card).some(
+    (effect) => Number(effect?.type) === Number(effectType),
+  );
+}
+
+/**
+ * A flattened field stands in for the raw effect only when that effect is
+ * absent from the card's metadata — otherwise the raw effect already models it
+ * and adding the field again would double count. A card whose unique is still
+ * locked at this limit break gets neither.
+ */
+function usesFlattenedField(card, field) {
+  if (hasMetadata(card) && !specialUniqueUnlocked(card)) return false;
+  return !declaresEffectType(card, FLATTENED_FIELD_EQUIVALENT_TYPES[field]);
+}
+
+export function friendshipRampBonus(card, friendshipTrainings) {
+  const step = n(card?.fs_ramp?.[0]);
+  const cap = n(card?.fs_ramp?.[1]);
+  if (step <= 0) return 0;
+  return (
+    Math.min(cap, step * Math.max(0, n(friendshipTrainings))) / 100
+  );
+}
+
+/**
+ * Training and friendship deltas that come from Euophrys' flattened unique
+ * fields rather than from raw effect metadata.
+ */
+export function flattenedFieldModifiers(card, uniqueContext, rainbow = false) {
+  let trainingDelta = 0;
+  let friendshipDelta = 0;
+
+  if (n(card?.crowd_bonus) !== 0 && usesFlattenedField(card, "crowd_bonus"))
+    trainingDelta +=
+      n(card.crowd_bonus) *
+      Math.max(1, Math.min(5, uniqueContext.supportsOnTraining));
+
+  if (
+    n(card?.highlander_training) !== 0 &&
+    usesFlattenedField(card, "highlander_training") &&
+    uniqueContext.deckTypes >= n(card?.highlander_threshold, 99)
+  )
+    trainingDelta += n(card.highlander_training);
+
+  if (n(card?.fan_bonus) !== 0 && usesFlattenedField(card, "fan_bonus"))
+    trainingDelta +=
+      n(card.fan_bonus) *
+      (Math.min(
+        FAN_BONUS_MAX_POINTS,
+        Math.floor(Math.max(0, uniqueContext.fans) / FAN_BONUS_PER_POINT),
+      ) /
+        100);
+
+  if (rainbow && usesFlattenedField(card, "fs_ramp"))
+    friendshipDelta += friendshipRampBonus(
+      card,
+      uniqueContext.friendshipTrainings,
+    );
+
+  return { trainingDelta, friendshipDelta };
+}
+
 export function effectiveStartingBond(card) {
   const locked = lockedFlattenedModifiers(card);
   return Math.max(0, n(card?.sb) + locked.startingBond);
@@ -316,6 +393,10 @@ export function resolveUniqueModifiers(card, trainingType, options = {}) {
     -type101.baked.motivation + locked.rainbowMotivation;
   let friendshipDelta =
     type101.active.friendship - type101.baked.friendship + locked.friendship;
+
+  const flattened = flattenedFieldModifiers(card, uniqueContext, rainbow);
+  trainingDelta += flattened.trainingDelta;
+  friendshipDelta += flattened.friendshipDelta;
 
   for (const effect of effects(card)) {
     const type = Number(effect?.type);
@@ -406,7 +487,7 @@ export function resolveUniqueModifiers(card, trainingType, options = {}) {
       (value, stat) => value + locked.stats[stat],
     ),
     rainbowStatBonusDelta: type101.baked.stats.map((value) => -value),
-    conditionalSpecialtyRate: type101.active.specialty,
+    conditionalSpecialtyFactor: type101.active.specialty,
     flattenedSpecialtyFactorDelta: type101.baked.specialty,
     lockedSpecialtyFactorDelta: locked.specialtyFactor,
     context: uniqueContext,
@@ -428,10 +509,20 @@ function type101Warnings(effect) {
 }
 
 export function uniqueModelWarnings(card, profileKey = "gl-late") {
-  if (!hasMetadata(card))
-    return ["raw unique metadata was unavailable for this support"];
-
   const warnings = [];
+  if (Number(card?.type) >= 5)
+    warnings.push(
+      "friend and group supports contribute mostly through hints, energy, and event size, which are outside the training-output metric",
+    );
+  if (n(card?.wisdom_recovery) > 0)
+    warnings.push(
+      "Wit energy recovery from this support is outside the current action-economy model",
+    );
+  if (!hasMetadata(card)) {
+    warnings.push("raw unique metadata was unavailable for this support");
+    return [...new Set(warnings)];
+  }
+
   const coverage =
     UNIQUE_PROFILE_COVERAGE[profileKey] || GLOBAL_UNIQUE_COVERAGE;
   for (const effect of effects(card)) {
@@ -460,10 +551,22 @@ export function uniqueModelWarnings(card, profileKey = "gl-late") {
   return [...new Set(warnings)];
 }
 
-export function averageFriendshipTrainingsForCareer(card, rainbowClicks) {
+/**
+ * How many friendship trainings a ramping unique needs before it caps, whether
+ * the ramp arrives as a raw type-106 effect or as a flattened `fs_ramp` field.
+ */
+export function rampTrainingCap(card) {
   const ramp = effects(card).find((effect) => Number(effect?.type) === 106);
-  if (!ramp || rainbowClicks <= 0) return 0;
-  const maxTrainings = Math.max(0, n(ramp.value, 5));
+  if (ramp) return Math.max(0, n(ramp.value, 5));
+  const step = n(card?.fs_ramp?.[0]);
+  if (step > 0 && usesFlattenedField(card, "fs_ramp"))
+    return Math.max(0, n(card?.fs_ramp?.[1]) / step);
+  return 0;
+}
+
+export function averageFriendshipTrainingsForCareer(card, rainbowClicks) {
+  const maxTrainings = rampTrainingCap(card);
+  if (!maxTrainings || rainbowClicks <= 0) return 0;
   const fullClicks = Math.floor(rainbowClicks);
   const fractional = Math.max(0, rainbowClicks - fullClicks);
   let weightedCount = 0;

@@ -1,41 +1,44 @@
 import {
   GLOBAL_UNIQUE_COVERAGE,
-  RARITY_NAMES,
   STAT_NAMES,
   STORAGE_KEY,
   TRAINING_PROFILES,
-  TYPE_NAMES,
   calculateCardEV,
   clampFacilityLevel,
   hasFacilityLevelUnique,
-  portraitImageUrl,
-  supportImageUrl,
   turnsPerFacilityLevel,
+  typeLabel,
   uniqueModelWarnings,
 } from "./app.mjs";
+import { loadCards } from "./data.mjs";
+import {
+  DEFAULT_SETTING_VALUES,
+  applySettingValues,
+  collectSettingValues,
+  emitSettingsChanged,
+  readSharedSettings,
+} from "./settings.mjs";
+import { decodeShareState, encodeShareState } from "./share.mjs";
+import {
+  MAX_SELECTED_CARDS,
+  buildGroups,
+  cardFor,
+  cardImageMarkup,
+  findGroup,
+  formatNumber as fmt,
+  formatPercent as pct,
+  htmlEscape,
+  lbLabel,
+  maxLimitBreak,
+  rarityLabel,
+  restoreSelected,
+  searchGroups,
+} from "./view-model.mjs";
 
-function fmt(value, digits = 2) {
-  return Number(value).toFixed(digits);
-}
-function pct(value) {
-  return `${(value * 100).toFixed(2)}%`;
-}
-function rarity(card) {
-  return RARITY_NAMES[card.rarity] || `R${card.rarity}`;
-}
-function lbLabel(lb) {
-  return Number(lb) === 4 ? "MLB" : `LB${lb}`;
-}
+const GROWTH_NAMES = ["Speed", "Stamina", "Power", "Guts", "Wit"];
+
 function cardTitle(card) {
   return card.title ? `[${card.title}]` : "";
-}
-function htmlEscape(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 function titleMarkup(card, className = "card-titleline") {
   return card.title
@@ -43,14 +46,18 @@ function titleMarkup(card, className = "card-titleline") {
     : "";
 }
 function rarityMarkup(card) {
-  return `<span class="rarity-chip">${htmlEscape(rarity(card))}</span>`;
+  return `<span class="rarity-chip">${htmlEscape(rarityLabel(card))}</span>`;
 }
 function futureMarkup(card) {
   return card.future ? '<span class="future-chip">FUTURE</span>' : "";
 }
-function cardSearchText(card) {
-  return `${card.char_name} ${card.title || ""} ${card.id} ${TYPE_NAMES[card.type]} ${rarity(card)}`.toLowerCase();
+function thumbMarkup(card, small = false) {
+  return cardImageMarkup(card, { small });
 }
+function portraitMarkup(card, small = false) {
+  return cardImageMarkup(card, { portrait: true, small });
+}
+
 function readStoredState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -71,6 +78,8 @@ function initBrowser() {
     facilityLevel: document.querySelector("#facility-level"),
     facilityPace: document.querySelector("#facility-pace"),
     facilityPaceSummary: document.querySelector("#facility-pace-summary"),
+    supportsOnTraining: document.querySelector("#supports-on-training"),
+    rankMetric: document.querySelector("#rank-metric"),
     search: document.querySelector("#card-search"),
     searchResults: document.querySelector("#search-results"),
     selectedCards: document.querySelector("#selected-cards"),
@@ -82,62 +91,46 @@ function initBrowser() {
     resultsBody: document.querySelector("#results-body"),
     resultDetails: document.querySelector("#result-details"),
     growthGrid: document.querySelector("#growth-grid"),
+    statWeightGrid: document.querySelector("#stat-weight-grid"),
     resetSettings: document.querySelector("#reset-settings"),
+    shareButton: document.querySelector("#share-link"),
+    shareStatus: document.querySelector("#share-status"),
   };
+  if (!els.selectedCards || !els.resultsBody) return;
+
   const state = { payload: null, groups: [], selected: [], activeDetailId: null };
-  const stored = readStoredState();
+  const shared = decodeShareState(location.hash);
+  const stored = shared || readStoredState();
+  // A share link seeds this visit and is then spent: leaving it in the address
+  // bar would make every later edit vanish on the next reload.
+  if (shared)
+    history.replaceState(null, "", location.pathname + location.search);
 
   els.includeFuture.checked = Boolean(stored?.includeFuture);
   els.search.placeholder = "Search title, character, or support ID…";
-  const growthNames = ["Speed", "Stamina", "Power", "Guts", "Wit"];
-  els.growthGrid.innerHTML = growthNames
-    .map(
-      (name, i) =>
-        `<div class="growth-field"><label for="growth-${i}">${name} %</label><input id="growth-${i}" data-growth-index="${i}" type="number" min="0" max="100" step="1" value="0" /></div>`,
-    )
-    .join("");
+  els.growthGrid.innerHTML = GROWTH_NAMES.map(
+    (name, i) =>
+      `<div class="growth-field"><label for="growth-${i}">${name} %</label><input id="growth-${i}" data-growth-index="${i}" type="number" min="0" max="100" step="1" value="0" /></div>`,
+  ).join("");
+  els.statWeightGrid.innerHTML = GROWTH_NAMES.map(
+    (name, i) =>
+      `<div class="growth-field"><label for="stat-weight-${i}">${name} ×</label><input id="stat-weight-${i}" data-stat-weight-index="${i}" type="number" min="0" max="5" step="0.1" value="1" /></div>`,
+  ).join("");
 
   function settings() {
-    const growth = [0, 1, 2, 3, 4].map(
-      (i) => 1 + Number(document.querySelector(`#growth-${i}`).value || 0) / 100,
-    );
-    growth.push(1);
-    return {
-      globalSpecialty: Number(els.globalSpec.value || 0),
-      profile: els.trainingProfile.value,
-      motivation: Number(els.motivation.value),
-      spWeight: Number(els.spWeight.value || 1.2),
-      facilityLevel: Number(els.facilityLevel.value || 5),
-      facilityPace: Number(els.facilityPace.value || 100),
-      growth,
-    };
-  }
-
-  function persistedSettings() {
-    return {
-      globalSpecialty: Number(els.globalSpec.value || 0),
-      profile: els.trainingProfile.value,
-      motivation: Number(els.motivation.value),
-      spWeight: Number(els.spWeight.value || 1.2),
-      facilityLevel: Number(els.facilityLevel.value || 5),
-      facilityPace: Number(els.facilityPace.value || 100),
-      growth: [0, 1, 2, 3, 4].map((i) =>
-        Number(document.querySelector(`#growth-${i}`).value || 0),
-      ),
-    };
+    return readSharedSettings(document);
   }
 
   function persistState() {
+    const payload = {
+      selected: state.selected.map(({ id, lb }) => ({ id, lb })),
+      settings: collectSettingValues(document),
+      includeFuture: els.includeFuture.checked,
+    };
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          selected: state.selected.map(({ id, lb }) => ({ id, lb })),
-          settings: persistedSettings(),
-          includeFuture: els.includeFuture.checked,
-        }),
-      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {}
+    return payload;
   }
 
   function syncSpecUI(value) {
@@ -154,9 +147,7 @@ function initBrowser() {
   function updateFacilityPaceSummary() {
     const pace = Number(els.facilityPace.value || 100);
     const turns = turnsPerFacilityLevel(pace);
-    const levelFiveTurn = Math.ceil(turns * 4);
-    els.facilityPaceSummary.textContent =
-      `${pace}% · ~${turns.toFixed(1)} turns / level · Lv5 ~ T${levelFiveTurn}`;
+    els.facilityPaceSummary.textContent = `${pace}% · ~${turns.toFixed(1)} turns / level · Lv5 ~ T${Math.ceil(turns * 4)}`;
   }
 
   function applyProfileDefaults(profileKey) {
@@ -170,84 +161,37 @@ function initBrowser() {
 
   function restoreSettings(saved) {
     const profileKey =
-      saved?.profile && TRAINING_PROFILES[saved.profile] ? saved.profile : "gl-late";
+      saved?.["training-profile"] && TRAINING_PROFILES[saved["training-profile"]]
+        ? saved["training-profile"]
+        : "gl-late";
     els.trainingProfile.value = profileKey;
     applyProfileDefaults(profileKey);
-    if (!saved || typeof saved !== "object") return;
-    if (Number.isFinite(Number(saved.globalSpecialty)))
-      syncSpecUI(Number(saved.globalSpecialty));
-    if (Number.isFinite(Number(saved.motivation)))
-      els.motivation.value = String(saved.motivation);
-    if (Number.isFinite(Number(saved.spWeight)))
-      els.spWeight.value = String(saved.spWeight);
-    if (Number.isFinite(Number(saved.facilityLevel)))
-      els.facilityLevel.value = String(clampFacilityLevel(saved.facilityLevel));
-    if (Number.isFinite(Number(saved.facilityPace)))
-      els.facilityPace.value = String(
-        Math.max(25, Math.min(100, Number(saved.facilityPace))),
-      );
-    if (Array.isArray(saved.growth)) {
-      saved.growth.slice(0, 5).forEach((value, i) => {
-        const el = document.querySelector(`#growth-${i}`);
-        if (el && Number.isFinite(Number(value))) el.value = String(value);
-      });
-    }
+    applySettingValues(document, saved);
+    els.facilityLevel.value = String(clampFacilityLevel(els.facilityLevel.value));
+    els.facilityPace.value = String(
+      Math.max(25, Math.min(100, Number(els.facilityPace.value) || 100)),
+    );
+    syncSpecUI(els.globalSpec.value);
     updateFacilityPaceSummary();
   }
 
   restoreSettings(stored?.settings);
 
-  function buildGroups(cards) {
-    const map = new Map();
-    for (const card of cards) {
-      if (!map.has(card.id))
-        map.set(card.id, { id: card.id, lbs: new Map(), sample: card });
-      map.get(card.id).lbs.set(card.limit_break, card);
-    }
-    return [...map.values()].sort((a, b) => b.id - a.id);
-  }
-
-  function currentCard(sel) {
-    const group = state.groups.find((g) => g.id === sel.id);
-    return group?.lbs.get(sel.lb) || group?.lbs.get(Math.max(...group.lbs.keys()));
-  }
-
-  function restoreSelected(saved) {
-    if (!Array.isArray(saved)) return [];
-    const restored = [];
-    for (const raw of saved) {
-      const id = Number(raw?.id);
-      const group = state.groups.find((g) => g.id === id);
-      if (!group || restored.some((item) => item.id === id)) continue;
-      const requestedLb = Number(raw?.lb);
-      const lb = group.lbs.has(requestedLb)
-        ? requestedLb
-        : Math.max(...group.lbs.keys());
-      restored.push({ id, lb });
-      if (restored.length === 10) break;
-    }
-    return restored;
-  }
-
-  function portraitMarkup(card, small = false) {
-    return `<div class="accent-card-thumb portrait-card-thumb${small ? " small" : ""}"><img class="card-thumb portrait-thumb" src="${htmlEscape(portraitImageUrl(card))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${htmlEscape(supportImageUrl(card.id))}'" /></div>`;
+  function currentCard(selection) {
+    return cardFor(state.groups, selection);
   }
 
   function renderSearch() {
-    const query = els.search.value.trim().toLowerCase();
-    if (!query || !state.payload) {
+    const matches = state.payload
+      ? searchGroups(state.groups, els.search.value, {
+          includeFuture: els.includeFuture.checked,
+          exclude: state.selected.map((selection) => selection.id),
+        })
+      : [];
+    if (!els.search.value.trim() || !state.payload) {
       els.searchResults.hidden = true;
       return;
     }
-    const already = new Set(state.selected.map((s) => s.id));
-    const matches = state.groups
-      .filter(
-        (group) =>
-          !already.has(group.id) &&
-          (!group.sample.future || els.includeFuture.checked) &&
-          cardSearchText(group.sample).includes(query),
-      )
-      .slice(0, 20);
     if (!matches.length) {
       els.searchResults.innerHTML =
         '<div class="search-meta" style="padding:12px">No matching support cards.</div>';
@@ -256,30 +200,31 @@ function initBrowser() {
     }
     els.searchResults.innerHTML = matches
       .map((group) => {
-        const card = group.lbs.get(Math.max(...group.lbs.keys())) || group.sample;
-        const maxLb = Math.max(...group.lbs.keys());
-        return `<button class="search-result" type="button" data-add-id="${card.id}" data-card-type="${card.type}"><div class="accent-card-thumb"><img class="card-thumb" src="${supportImageUrl(card.id)}" alt="" loading="lazy" /></div><div>${titleMarkup(card, "search-titleline")}<div class="name-row"><div class="search-name">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="search-meta">${TYPE_NAMES[card.type]} · #${card.id} · LB0–${lbLabel(maxLb)}</div></div><div class="add-mark">＋</div></button>`;
+        const card = group.lbs.get(maxLimitBreak(group)) || group.sample;
+        return `<button class="search-result" type="button" data-add-id="${card.id}" data-card-type="${card.type}">${thumbMarkup(card)}<div>${titleMarkup(card, "search-titleline")}<div class="name-row"><div class="search-name">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="search-meta">${htmlEscape(typeLabel(card))} · #${card.id} · LB0–${lbLabel(maxLimitBreak(group))}</div></div><div class="add-mark">＋</div></button>`;
       })
       .join("");
     els.searchResults.hidden = false;
   }
 
   function addCard(id) {
-    if (state.selected.length >= 10 || state.selected.some((s) => s.id === id)) return;
-    const group = state.groups.find((g) => g.id === id);
+    if (
+      state.selected.length >= MAX_SELECTED_CARDS ||
+      state.selected.some((selection) => selection.id === id)
+    )
+      return;
+    const group = findGroup(state.groups, id);
     if (!group) return;
-    state.selected.push({ id, lb: Math.max(...group.lbs.keys()) });
+    state.selected.push({ id, lb: maxLimitBreak(group) });
     els.search.value = "";
     els.searchResults.hidden = true;
-    persistState();
-    renderAll();
+    commit();
   }
 
   function removeCard(id) {
-    state.selected = state.selected.filter((s) => s.id !== id);
+    state.selected = state.selected.filter((selection) => selection.id !== id);
     if (state.activeDetailId === id) state.activeDetailId = null;
-    persistState();
-    renderAll();
+    commit();
   }
 
   function renderSelected() {
@@ -292,32 +237,34 @@ function initBrowser() {
     }
     els.selectedCards.className = "selected-cards";
     els.selectedCards.innerHTML = state.selected
-      .map((sel) => {
-        const group = state.groups.find((g) => g.id === sel.id);
-        const card = currentCard(sel);
+      .map((selection) => {
+        const group = findGroup(state.groups, selection.id);
+        const card = currentCard(selection);
         const lbOptions = [...group.lbs.keys()]
           .sort((a, b) => a - b)
           .map(
             (lb) =>
-              `<option value="${lb}" ${lb === sel.lb ? "selected" : ""}>${lbLabel(lb)}</option>`,
+              `<option value="${lb}" ${lb === selection.lb ? "selected" : ""}>${lbLabel(lb)}</option>`,
           )
           .join("");
-        return `<div class="selected-card" data-card-type="${card.type}">${portraitMarkup(card)}<div style="min-width:0">${titleMarkup(card)}<div class="name-row"><div class="selected-title" title="${htmlEscape(card.char_name)}">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="selected-meta"><span class="type-tag">${TYPE_NAMES[card.type]}</span><select data-lb-id="${card.id}">${lbOptions}</select></div></div><button class="remove-card" data-remove-id="${card.id}" type="button" title="Remove">×</button></div>`;
+        return `<div class="selected-card" data-card-type="${card.type}">${portraitMarkup(card)}<div style="min-width:0">${titleMarkup(card)}<div class="name-row"><div class="selected-title" title="${htmlEscape(card.char_name)}">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="selected-meta"><span class="type-tag">${htmlEscape(typeLabel(card))}</span><select data-lb-id="${card.id}">${lbOptions}</select></div></div><button class="remove-card" data-remove-id="${card.id}" type="button" title="Remove">×</button></div>`;
       })
       .join("");
   }
 
   function evaluatedCards() {
-    const opts = settings();
-    const rows = state.selected.map((sel) => {
-      const card = currentCard(sel);
+    const options = settings();
+    const rows = state.selected.map((selection) => {
+      const card = currentCard(selection);
       return {
         card,
-        ev: calculateCardEV(card, opts),
-        flags: uniqueModelWarnings(card, opts.profile),
+        ev: calculateCardEV(card, options),
+        flags: uniqueModelWarnings(card, options.profile),
       };
     });
-    rows.sort((a, b) => b.ev.specialtyScore - a.ev.specialtyScore);
+    const key =
+      options.rankMetric === "allPlacement" ? "allPlacementScore" : "specialtyScore";
+    rows.sort((a, b) => b.ev[key] - a.ev[key]);
     return rows;
   }
 
@@ -335,7 +282,18 @@ function initBrowser() {
     const warning = flags.length
       ? `<div class="warning-box"><strong>★ Unique not fully modeled:</strong> ${htmlEscape(flags.join(", "))}. The displayed value may omit or inherit an upstream approximation for that effect; treat it as provisional.</div>`
       : "";
-    els.resultDetails.innerHTML = `<div class="detail-card" data-card-type="${card.type}"><div class="detail-top"><div>${titleMarkup(card)}<div class="name-row"><div class="detail-title">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="search-meta">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · #${card.id} · Specialty Priority ${fmt(card.specialty_rate, 0)} · Specialty Rate ${pct(ev.appearance.specialty)}${facilityUniqueMeta(card, ev)}</div></div><div class="formula-chip">#${card.id}</div></div><div class="detail-ev-heading"><strong>Per-turn Specialty EV by stat</strong><span>Appearance-weighted average contribution across all turns.</span></div><div class="stat-vector">${STAT_NAMES.map((name, i) => `<div class="stat-cell"><span>${name}</span><strong>${fmt(ev.specialtyVector[i])}</strong></div>`).join("")}</div>${warning}</div>`;
+    const specialtyCells = STAT_NAMES.map(
+      (name, i) =>
+        `<div class="stat-cell"><span>${name}</span><strong>${fmt(ev.specialtyVector[i])}</strong></div>`,
+    ).join("");
+    const allPlacementCells = STAT_NAMES.map(
+      (name, i) =>
+        `<div class="stat-cell"><span>${name}</span><strong>${fmt(ev.allPlacementVector[i])}</strong></div>`,
+    ).join("");
+    const specialtyHeading = ev.hasSpecialty
+      ? `<div class="detail-ev-heading"><strong>Per-turn Specialty EV by stat</strong><span>Appearance-weighted average contribution on the card's own training.</span></div><div class="stat-vector">${specialtyCells}</div>`
+      : `<div class="detail-ev-heading"><strong>No specialty training</strong><span>Friend and group supports have no preferred training, so all of their output is all-placement.</span></div>`;
+    els.resultDetails.innerHTML = `<div class="detail-card" data-card-type="${card.type}"><div class="detail-top"><div>${titleMarkup(card)}<div class="name-row"><div class="detail-title">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="search-meta">${htmlEscape(typeLabel(card))} · ${lbLabel(card.limit_break)} · #${card.id} · Specialty Priority ${fmt(card.specialty_rate, 0)} · Specialty Rate ${pct(ev.appearance.specialty)}${facilityUniqueMeta(card, ev)}</div></div><div class="formula-chip">#${card.id}</div></div>${specialtyHeading}<div class="detail-ev-heading"><strong>Per-turn All-placement EV by stat</strong><span>Adds what the card contributes on the other training rooms it appears in.</span></div><div class="stat-vector">${allPlacementCells}</div>${warning}</div>`;
   }
 
   function renderResults() {
@@ -347,21 +305,41 @@ function initBrowser() {
     }
     els.results.hidden = false;
     els.resultsEmpty.hidden = true;
+    const options = settings();
     const rows = evaluatedCards();
-    if (!state.activeDetailId || !rows.some((r) => r.card.id === state.activeDetailId))
+    if (
+      !state.activeDetailId ||
+      !rows.some((row) => row.card.id === state.activeDetailId)
+    )
       state.activeDetailId = rows[0]?.card.id;
+    const bestMetric =
+      options.rankMetric === "allPlacement" ? "allPlacementScore" : "specialtyScore";
     els.resultsBody.innerHTML = rows
       .map((row, index) => {
         const { card, ev, flags } = row;
-        return `<tr data-detail-id="${card.id}" class="${state.activeDetailId === card.id ? "active" : ""}" data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="result-support" data-card-type="${card.type}"><div class="accent-card-thumb small"><img class="card-thumb" src="${supportImageUrl(card.id)}" alt="" /></div><div>${titleMarkup(card, "result-titleline")}<div class="name-row"><div class="result-name">${htmlEscape(card.char_name)}${flags.length ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>' : ""}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="result-sub">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · #${card.id}</div></div></div></td><td><div class="metric-main">${fmt(card.specialty_rate, 0)}</div><div class="metric-sub">得意率</div></td><td><div class="metric-main">${pct(ev.appearance.specialty)}</div><div class="metric-sub">preferred training appearance</div></td><td><div class="metric-main">+${fmt(ev.rainbowScore)}</div><div class="metric-sub">extra weighted stats</div></td><td class="${index === 0 ? "best" : ""}"><div class="metric-main">${fmt(ev.specialtyScore)}</div><div class="metric-sub">weighted stats / turn</div></td></tr>`;
+        const best = (metric) =>
+          index === 0 && metric === bestMetric ? " best" : "";
+        return `<tr data-detail-id="${card.id}" class="${state.activeDetailId === card.id ? "active" : ""}" data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="result-support" data-card-type="${card.type}">${thumbMarkup(card, true)}<div>${titleMarkup(card, "result-titleline")}<div class="name-row"><div class="result-name">${htmlEscape(card.char_name)}${flags.length ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>' : ""}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="result-sub">${htmlEscape(typeLabel(card))} · ${lbLabel(card.limit_break)} · #${card.id}</div></div></div></td><td><div class="metric-main">${fmt(card.specialty_rate, 0)}</div><div class="metric-sub">得意率</div></td><td><div class="metric-main">${pct(ev.appearance.specialty)}</div><div class="metric-sub">preferred training appearance</div></td><td><div class="metric-main">+${fmt(ev.rainbowScore)}</div><div class="metric-sub">extra weighted stats</div></td><td class="${best("specialtyScore").trim()}"><div class="metric-main">${fmt(ev.specialtyScore)}</div><div class="metric-sub">weighted stats / turn</div></td><td class="${best("allPlacementScore").trim()}"><div class="metric-main">${fmt(ev.allPlacementScore)}</div><div class="metric-sub">every room it appears on</div></td></tr>`;
       })
       .join("");
-    renderDetails(rows.find((r) => r.card.id === state.activeDetailId) || rows[0]);
+    renderDetails(rows.find((row) => row.card.id === state.activeDetailId) || rows[0]);
   }
 
   function renderAll() {
     renderSelected();
     renderResults();
+  }
+
+  /**
+   * Persist and re-render. Card selection reaches the other views through their
+   * observer on the selected-cards container, so only an actual settings change
+   * broadcasts — otherwise every add and remove would render them twice.
+   */
+  function commit({ settingsChanged = false } = {}) {
+    persistState();
+    if (settingsChanged) renderResults();
+    else renderAll();
+    if (settingsChanged) emitSettingsChanged(document);
   }
 
   els.search.addEventListener("input", renderSearch);
@@ -385,35 +363,36 @@ function initBrowser() {
   els.selectedCards.addEventListener("change", (event) => {
     const select = event.target.closest("[data-lb-id]");
     if (!select) return;
-    const item = state.selected.find((s) => s.id === Number(select.dataset.lbId));
+    const item = state.selected.find(
+      (selection) => selection.id === Number(select.dataset.lbId),
+    );
     if (item) item.lb = Number(select.value);
-    persistState();
-    renderAll();
+    commit();
   });
 
   function onSettingsChanged() {
-    persistState();
-    renderResults();
+    commit({ settingsChanged: true });
   }
   els.trainingProfile.addEventListener("input", () => {
     applyProfileDefaults(els.trainingProfile.value);
     onSettingsChanged();
   });
-  [els.motivation, els.spWeight, els.facilityLevel].forEach((el) =>
-    el.addEventListener("input", onSettingsChanged),
-  );
+  document
+    .querySelectorAll(
+      "#motivation, #sp-weight, #facility-level, #supports-on-training, #deck-types, #fans, #max-energy, #current-energy, #passive-bond, #rank-metric, #include-initial-stats, #include-event-stats",
+    )
+    .forEach((el) => el.addEventListener("input", onSettingsChanged));
   els.facilityPace.addEventListener("input", () => {
     updateFacilityPaceSummary();
-    persistState();
+    onSettingsChanged();
   });
   document
-    .querySelectorAll("[data-growth-index]")
+    .querySelectorAll("[data-growth-index], [data-stat-weight-index]")
     .forEach((el) => el.addEventListener("input", onSettingsChanged));
 
-  function setGlobalSpec(value, save = true) {
+  function setGlobalSpec(value) {
     syncSpecUI(value);
-    if (save) persistState();
-    renderResults();
+    onSettingsChanged();
   }
   els.globalSpec.addEventListener("input", () => setGlobalSpec(els.globalSpec.value));
   els.globalSpecRange.addEventListener("input", () =>
@@ -424,31 +403,50 @@ function initBrowser() {
   );
 
   els.resetSettings.addEventListener("click", () => {
-    els.trainingProfile.value = "gl-late";
-    applyProfileDefaults("gl-late");
-    els.motivation.value = "0.2";
-    document.querySelectorAll("[data-growth-index]").forEach((el) => {
-      el.value = 0;
-    });
-    persistState();
-    renderResults();
+    applySettingValues(document, DEFAULT_SETTING_VALUES);
+    // The profile's own Specialty Priority, SP value, and facility settings
+    // come from the preset rather than from the defaults map.
+    applyProfileDefaults(els.trainingProfile.value);
+    onSettingsChanged();
   });
   els.resetCards.addEventListener("click", () => {
     state.selected = [];
     state.activeDetailId = null;
-    persistState();
-    renderAll();
+    commit();
   });
 
-  fetch("./data/cards.json", { cache: "no-cache" })
-    .then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    })
+  els.shareButton?.addEventListener("click", async () => {
+    const setStatus = (message) => {
+      if (!els.shareStatus) return;
+      els.shareStatus.textContent = message;
+      setTimeout(() => {
+        els.shareStatus.textContent = "";
+      }, 4000);
+    };
+    let url;
+    try {
+      url = `${location.origin}${location.pathname}${location.search}#${encodeShareState(persistState())}`;
+    } catch (error) {
+      console.error("Share link could not be built", error);
+      setStatus("Link failed");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setStatus("Link copied");
+    } catch {
+      // Clipboard access can be refused; the address bar is the fallback, and
+      // the hash is consumed and cleared on the next load either way.
+      location.hash = url.slice(url.indexOf("#") + 1);
+      setStatus("Link is in the address bar");
+    }
+  });
+
+  loadCards()
     .then((payload) => {
       state.payload = payload;
       state.groups = buildGroups(payload.cards);
-      state.selected = restoreSelected(stored?.selected);
+      state.selected = restoreSelected(state.groups, stored?.selected);
       persistState();
       const date = payload.generated_at
         ? new Date(payload.generated_at).toLocaleDateString()
@@ -459,9 +457,14 @@ function initBrowser() {
       const futureCount = Number(
         payload.future_card_count || state.groups.filter((g) => g.sample.future).length,
       );
-      els.sourcePill.textContent = `${globalCount} Global${futureCount ? ` · ${futureCount} future` : ""} · uniques through ${GLOBAL_UNIQUE_COVERAGE} · synced ${date}`;
+      const uniqueCoverage = Number(payload.unique_metadata_count || 0);
+      const coverageNote = uniqueCoverage
+        ? ` · ${uniqueCoverage} unique records`
+        : " · unique metadata unavailable";
+      els.sourcePill.textContent = `${globalCount} Global${futureCount ? ` · ${futureCount} future` : ""} · uniques through ${GLOBAL_UNIQUE_COVERAGE}${coverageNote} · synced ${date}`;
       els.sourcePill.classList.add("ready");
       renderAll();
+      emitSettingsChanged(document);
     })
     .catch((error) => {
       console.error(error);
