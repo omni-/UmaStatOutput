@@ -780,14 +780,14 @@ test("friend and group supports are scored on every room they appear on", () => 
 });
 
 test("career projection adds guaranteed initial stats to the run total", () => {
-  const withoutInitial = calculateCareerProjection({
-    ...card,
-    starting_stats: [0, 0, 0, 0, 0],
-  });
-  const withInitial = calculateCareerProjection({
-    ...card,
-    starting_stats: [30, 0, 15, 0, 0],
-  });
+  const withoutInitial = calculateCareerProjection(
+    { ...card, starting_stats: [0, 0, 0, 0, 0] },
+    { includeEventStats: false },
+  );
+  const withInitial = calculateCareerProjection(
+    { ...card, starting_stats: [30, 0, 15, 0, 0] },
+    { includeEventStats: false },
+  );
 
   assert.deepEqual(withInitial.initialVector, [30, 0, 15, 0, 0, 0]);
   assert.deepEqual(withInitial.trainingVector, withoutInitial.vector);
@@ -798,7 +798,7 @@ test("career projection adds guaranteed initial stats to the run total", () => {
 });
 
 test("career projection treats missing initial stats as zero", () => {
-  const result = calculateCareerProjection(card);
+  const result = calculateCareerProjection(card, { includeEventStats: false });
 
   assert.deepEqual(result.initialVector, [0, 0, 0, 0, 0, 0]);
   assert.deepEqual(result.vector, result.trainingVector);
@@ -809,7 +809,7 @@ test("career projection treats missing initial stats as zero", () => {
 test("career projection can exclude initial stats from totals", () => {
   const result = calculateCareerProjection(
     { ...card, starting_stats: [30, 0, 15, 0, 0] },
-    { includeInitialStats: false },
+    { includeInitialStats: false, includeEventStats: false },
   );
 
   assert.deepEqual(result.initialVector, [30, 0, 15, 0, 0, 0]);

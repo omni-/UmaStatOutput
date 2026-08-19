@@ -23,7 +23,9 @@ Three views sit on the same settings:
 - the **run projection**, which follows one card's bond across a 56-turn career and reports what it produces, including when it starts rainbowing and where that bond estimate came from;
 - the **deck projection**, which enumerates every way up to six selected supports can spread across the five training rooms each turn, assumes the player takes the best room, and prices each support by what the whole deck loses without it.
 
-Support-event stat rewards, race bonuses, hints, energy converting into extra actions, and scenario links remain outside all three. Context-dependent unique effects are flagged in the UI rather than silently guessed.
+Both run views count each support's one-time event rewards, scaled by its event-effect size and listed per card rather than folded anonymously into the total. Those figures are the best reasonable event route Euophrys records, not an expectation over branches, and events with random outcomes or skill rewards are not represented at all; the toggle above the run table turns them off.
+
+Race bonuses, hints, energy converting into extra actions, and scenario links remain outside all three views. Context-dependent unique effects are flagged in the UI rather than silently guessed.
 
 ## Data source
 

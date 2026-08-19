@@ -20,6 +20,7 @@ export const SETTING_IDS = [
   "facility-level",
   "facility-pace",
   "include-initial-stats",
+  "include-event-stats",
   "supports-on-training",
   "deck-types",
   "fans",
@@ -85,6 +86,7 @@ export const DEFAULT_SETTING_VALUES = {
   "current-energy": String(GLOBAL_UNIQUE_CONTEXT.currentEnergy),
   "passive-bond": String(DEFAULT_PASSIVE_BOND_PER_TURN),
   "include-initial-stats": true,
+  "include-event-stats": true,
   ...Object.fromEntries([0, 1, 2, 3, 4].map((index) => [`growth-${index}`, "0"])),
   ...Object.fromEntries(
     [0, 1, 2, 3, 4].map((index) => [`stat-weight-${index}`, "1"]),
@@ -142,6 +144,7 @@ export function readSharedSettings(root) {
     ),
     facilityPace: value(root, "facility-pace", profile.facilityPace ?? 100),
     includeInitialStats: checked(root, "include-initial-stats", true),
+    includeEventStats: checked(root, "include-event-stats", true),
     supportsOnTraining: Math.max(
       1,
       Math.min(

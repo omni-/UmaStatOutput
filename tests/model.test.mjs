@@ -162,6 +162,70 @@ test("card art is served locally with the upstream host as the fallback", () => 
   );
 });
 
+test("support event rewards land once per run and can be turned off", () => {
+  const eventCard = { ...card, event_stats: [20, 0, 10, 0, 0, 30, 12, 10] };
+  const included = calculateCareerProjection(eventCard, {});
+  const excluded = calculateCareerProjection(eventCard, {
+    includeEventStats: false,
+  });
+
+  // No appearance rate, friendship bonus, or scenario multiplier applies: the
+  // reward is what the event gives, once.
+  assert.deepEqual(included.eventVector, [20, 0, 10, 0, 0, 30, 0].slice(0, 6));
+  assert.equal(included.eventEnergy, 12);
+  assert.equal(included.vector[0], excluded.vector[0] + 20);
+  assert.equal(included.vector[5], excluded.vector[5] + 30);
+  assert.equal(included.includesEventStats, true);
+  assert.equal(excluded.includesEventStats, false);
+  assert.deepEqual(excluded.vector, excluded.trainingVector);
+  assert.equal(included.eventScore, 20 + 10 + 30 * 1.2);
+});
+
+test("event rewards scale with the card's event-effect size", () => {
+  const base = { ...card, event_stats: [20, 0, 10, 0, 0, 30, 10, 10] };
+  const larger = { ...base, effect_size_up: 1.2, energy_up: 1.3 };
+  const plain = calculateCareerProjection(base, {});
+  const scaled = calculateCareerProjection(larger, {});
+  assert.ok(Math.abs(scaled.eventVector[0] - 24) < 1e-12);
+  assert.ok(Math.abs(scaled.eventEnergy - 13) < 1e-12);
+  assert.ok(scaled.score > plain.score);
+});
+
+test("a card with no event row falls back the way upstream does", () => {
+  const ssr = calculateCareerProjection({ ...card, event_stats: null }, {});
+  const sr = calculateCareerProjection(
+    { ...card, rarity: 2, event_stats: null },
+    {},
+  );
+  const r = calculateCareerProjection(
+    { ...card, rarity: 1, event_stats: null },
+    {},
+  );
+  assert.deepEqual(ssr.eventVector, [9, 9, 9, 9, 9, 0]);
+  assert.deepEqual(sr.eventVector, [7, 7, 7, 7, 7, 0]);
+  assert.deepEqual(r.eventVector, [0, 0, 0, 0, 0, 0]);
+  assert.equal(ssr.eventSource, "rarity fallback");
+  assert.equal(r.eventSource, "no event estimate");
+});
+
+test("a deck counts each support's event rewards once", () => {
+  const eventCard = (id) => ({
+    ...card,
+    id,
+    type: id % 5,
+    event_stats: [20, 0, 10, 0, 0, 30, 0, 10],
+  });
+  const deck = [eventCard(1), eventCard(2)];
+  const included = calculateDeckProjection(deck, { withMarginals: false });
+  const excluded = calculateDeckProjection(deck, {
+    withMarginals: false,
+    includeEventStats: false,
+  });
+  assert.deepEqual(included.eventVector, [40, 0, 20, 0, 0, 60]);
+  assert.equal(included.vector[0], excluded.vector[0] + 40);
+  assert.equal(excluded.eventScore, included.eventScore);
+});
+
 test("bond source label names the estimate behind the timing", () => {
   assert.match(
     bondSourceLabel(calculateCareerProjection(card)),

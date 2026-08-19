@@ -379,7 +379,7 @@ function initBrowser() {
   });
   document
     .querySelectorAll(
-      "#motivation, #sp-weight, #facility-level, #supports-on-training, #deck-types, #fans, #max-energy, #current-energy, #passive-bond, #rank-metric, #include-initial-stats",
+      "#motivation, #sp-weight, #facility-level, #supports-on-training, #deck-types, #fans, #max-energy, #current-energy, #passive-bond, #rank-metric, #include-initial-stats, #include-event-stats",
     )
     .forEach((el) => el.addEventListener("input", onSettingsChanged));
   els.facilityPace.addEventListener("input", () => {

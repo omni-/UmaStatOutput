@@ -16,7 +16,11 @@ import {
 } from "./app.mjs";
 import { DEFAULT_PASSIVE_BOND_PER_TURN } from "./app.mjs";
 import { rampTrainingCap } from "./unique-model.mjs";
-import { RUN_PROFILES, baseGainsSwitchTurn } from "./career.mjs";
+import {
+  RUN_PROFILES,
+  baseGainsSwitchTurn,
+  supportEventInfo,
+} from "./career.mjs";
 
 export const MAX_DECK_SIZE = 6;
 const TRAINING_COUNT = 5;
@@ -28,11 +32,6 @@ const BOND_PER_SELECTED_TRAINING = 5;
 const MAX_SEGMENT_TURNS = 8;
 const RAMP_SEGMENT_TURNS = 2;
 
-function eventBond(card) {
-  if (Array.isArray(card.event_stats) && card.event_stats.length >= 8)
-    return Number(card.event_stats[7] || 0);
-  return Number(card.rarity) >= 2 ? 5 : 0;
-}
 
 function deckTypeCount(cards) {
   return new Set(cards.map((card) => Number(card.type))).size;
@@ -150,6 +149,7 @@ export function calculateDeckProjection(cards, options = {}) {
   const statWeights = normalizeStatWeights(options.statWeights);
   const facilityPace = Number(options.facilityPace ?? profile.facilityPace ?? 100);
   const includeInitialStats = options.includeInitialStats !== false;
+  const includeEventStats = options.includeEventStats !== false;
   const passiveBondPerTurn = Math.max(
     0,
     Number(options.passiveBondPerTurn ?? DEFAULT_PASSIVE_BOND_PER_TURN),
@@ -168,8 +168,9 @@ export function calculateDeckProjection(cards, options = {}) {
     ? RAMP_SEGMENT_TURNS
     : MAX_SEGMENT_TURNS;
 
-  const bonds = deck.map((card) =>
-    Math.min(100, effectiveStartingBond(card) + eventBond(card)),
+  const events = deck.map((card) => supportEventInfo(card));
+  const bonds = deck.map((card, index) =>
+    Math.min(100, effectiveStartingBond(card) + events[index].bond),
   );
   // Bond timing is reported for every support, including friend and group
   // cards, whose own bonuses switch on at the same threshold even though they
@@ -287,8 +288,17 @@ export function calculateDeckProjection(cards, options = {}) {
     const initial = effectiveStartingStats(card);
     return total.map((value, stat) => value + initial[stat]);
   }, new Array(6).fill(0));
+  // Each support's event rewards land once in the run, exactly as they do in
+  // the single-card projection.
+  const eventVector = events.reduce(
+    (total, event) => total.map((value, stat) => value + event.stats[stat]),
+    new Array(6).fill(0),
+  );
   const vector = trainingVector.map(
-    (value, stat) => value + (includeInitialStats ? initialVector[stat] : 0),
+    (value, stat) =>
+      value +
+      (includeInitialStats ? initialVector[stat] : 0) +
+      (includeEventStats ? eventVector[stat] : 0),
   );
   const score = weightedSum(vector, spWeight, statWeights);
 
@@ -334,7 +344,10 @@ export function calculateDeckProjection(cards, options = {}) {
     score,
     trainingScore: weightedSum(trainingVector, spWeight, statWeights),
     initialScore: weightedSum(initialVector, spWeight, statWeights),
+    eventVector,
+    eventScore: weightedSum(eventVector, spWeight, statWeights),
     includesInitialStats: includeInitialStats,
+    includesEventStats: includeEventStats,
     baselineScore: baseline ? baseline.score : 0,
     supportScore: baseline ? score - baseline.score : 0,
     members,

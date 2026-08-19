@@ -16,6 +16,7 @@ import {
   hasFacilityLevelUnique,
   turnsPerFacilityLevel,
   uniqueModelWarnings,
+  STAT_NAMES,
   TRAINING_PROFILES,
 } from "./app.mjs";
 import {
@@ -87,14 +88,45 @@ export { DEFAULT_PASSIVE_BOND_PER_TURN };
 // it stays negligible.
 const MAX_SEGMENT_TURNS = 2;
 
-function eventInfo(card) {
-  if (Array.isArray(card.event_stats) && card.event_stats.length >= 8)
+// Upstream event vectors are laid out [Speed, Stamina, Power, Guts, Wit, SP,
+// Energy, Bond]. Euophrys's README documents Energy and SP the other way round;
+// the README is wrong and their own consuming code is not, so do not "fix" this.
+const EVENT_ENERGY = 6;
+const EVENT_BOND = 7;
+
+// Flat stand-ins for cards with no upstream event entry, matching the upstream
+// calculator so a missing row is not scored as a confident zero. The card's
+// eventSource carries which branch produced the numbers.
+const RARITY_FALLBACK_STATS = { 2: 7, 3: 9 };
+
+/**
+ * Resolves a card's one-time support-event contribution for a whole run.
+ *
+ * The stat and energy rewards are what Euophrys records as the best reasonable
+ * event route, so they are an optimistic path value rather than an expectation
+ * over every branch; events with random outcomes and skill rewards are not
+ * represented at all. Callers surface that assumption rather than burying it.
+ */
+export function supportEventInfo(card) {
+  const stats = new Array(6).fill(0);
+  const effectSize = Number(card.effect_size_up ?? 1) || 1;
+  if (Array.isArray(card.event_stats) && card.event_stats.length >= 8) {
+    for (let stat = 0; stat < 6; stat++)
+      stats[stat] = Number(card.event_stats[stat] || 0) * effectSize;
     return {
-      bond: Number(card.event_stats[7] || 0),
+      stats,
+      bond: Number(card.event_stats[EVENT_BOND] || 0),
+      energy:
+        Number(card.event_stats[EVENT_ENERGY] || 0) *
+        (Number(card.energy_up ?? 1) || 1),
       source: "upstream event data",
     };
-  if (Number(card.rarity) >= 2) return { bond: 5, source: "rarity fallback" };
-  return { bond: 0, source: "no event estimate" };
+  }
+  const fallback = RARITY_FALLBACK_STATS[Number(card.rarity)];
+  if (fallback === undefined)
+    return { stats, bond: 0, energy: 0, source: "no event estimate" };
+  for (let stat = 0; stat < 5; stat++) stats[stat] = fallback * effectSize;
+  return { stats, bond: 5, energy: 0, source: "rarity fallback" };
 }
 
 function addScaled(target, values, scale) {
@@ -132,6 +164,7 @@ export function calculateCareerProjection(card, options = {}) {
   const spWeight = Number(options.spWeight ?? profile.spWeight ?? 1.2);
   const statWeights = normalizeStatWeights(options.statWeights);
   const includeInitialStats = options.includeInitialStats !== false;
+  const includeEventStats = options.includeEventStats !== false;
   const facilityPace = Number(options.facilityPace ?? profile.facilityPace ?? 100);
   const passiveBondPerTurn = Math.max(
     0,
@@ -139,7 +172,7 @@ export function calculateCareerProjection(card, options = {}) {
   );
   const specialty = hasTrainingSpecialty(card);
   const cardType = Number(card.type);
-  const event = eventInfo(card);
+  const event = supportEventInfo(card);
   const startingBond = effectiveStartingBond(card);
   const switchTurn = baseGainsSwitchTurn(run, facilityPace);
   const offSelectionDenominator = Math.max(
@@ -264,18 +297,29 @@ export function calculateCareerProjection(card, options = {}) {
     rainbowClicks,
   );
   const initialVector = effectiveStartingStats(card);
+  // Event rewards land once per run, so they are added flat: no appearance
+  // rate, facility level, friendship bonus, scenario multiplier, motivation or
+  // growth applies to them.
+  const eventVector = event.stats;
   const vector = trainingVector.map(
-    (value, stat) => value + (includeInitialStats ? initialVector[stat] : 0),
+    (value, stat) =>
+      value +
+      (includeInitialStats ? initialVector[stat] : 0) +
+      (includeEventStats ? eventVector[stat] : 0),
   );
 
   return {
     vector,
     trainingVector,
     initialVector,
+    eventVector,
     score: weightedSum(vector, spWeight, statWeights),
     trainingScore: weightedSum(trainingVector, spWeight, statWeights),
     initialScore: weightedSum(initialVector, spWeight, statWeights),
+    eventScore: weightedSum(eventVector, spWeight, statWeights),
     includesInitialStats: includeInitialStats,
+    includesEventStats: includeEventStats,
+    eventEnergy: event.energy,
     hasSpecialty: specialty,
     daysToBond,
     rainbowDays,
@@ -310,8 +354,27 @@ function portrait(card) {
   return cardImageMarkup(card, { portrait: true, small: true });
 }
 
-function formatInitialStat(value) {
+function formatOneTimeStat(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+// Spells out the raw event vector so the optimistic best-path assumption behind
+// it is inspectable rather than folded anonymously into the totals.
+function eventBreakdown(career) {
+  if (!career.includesEventStats) return "";
+  const parts = career.eventVector
+    .map((value, stat) =>
+      value
+        ? `${value > 0 ? "+" : "−"}${formatOneTimeStat(Math.abs(value))} ${STAT_NAMES[stat]}`
+        : "",
+    )
+    .filter(Boolean);
+  if (career.eventEnergy)
+    parts.push(
+      `${career.eventEnergy > 0 ? "+" : "−"}${formatOneTimeStat(Math.abs(career.eventEnergy))} energy (unscored)`,
+    );
+  if (!parts.length) return "";
+  return ` · events ${parts.join(", ")}`;
 }
 
 /** Human-readable description of where a card's bond timing came from. */
@@ -354,10 +417,16 @@ function initCareerView() {
             const initial = career.includesInitialStats
               ? career.initialVector[stat]
               : 0;
+            const eventStat = career.includesEventStats
+              ? career.eventVector[stat]
+              : 0;
             const initialLabel = initial
-              ? `<span class="career-initial"> (+${formatInitialStat(initial)} initial)</span>`
+              ? `<span class="career-initial"> (+${formatOneTimeStat(initial)} initial)</span>`
               : "";
-            return `<td class="career-stat"><strong>${Number(value).toFixed(1)}</strong>${initialLabel}</td>`;
+            const eventLabel = eventStat
+              ? `<span class="career-initial"> (${eventStat > 0 ? "+" : "−"}${formatOneTimeStat(Math.abs(eventStat))} event)</span>`
+              : "";
+            return `<td class="career-stat"><strong>${Number(value).toFixed(1)}</strong>${initialLabel}${eventLabel}</td>`;
           })
           .join("");
         const facilityMeta = hasFacilityLevelUnique(card)
@@ -365,7 +434,11 @@ function initCareerView() {
           : "";
         const initialMeta =
           career.includesInitialStats && career.initialScore
-            ? `+${formatInitialStat(career.initialScore)} initial · `
+            ? `+${formatOneTimeStat(career.initialScore)} initial · `
+            : "";
+        const eventMeta =
+          career.includesEventStats && career.eventScore
+            ? `+${formatOneTimeStat(career.eventScore)} event · `
             : "";
         const bondMeta = career.hasSpecialty
           ? `bond phase ≈ ${career.daysToBond.toFixed(1)} turns · rainbows ≈ ${career.rainbowClicks.toFixed(1)}`
@@ -373,7 +446,7 @@ function initCareerView() {
         const warnMark = flags.length
           ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>'
           : "";
-        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${career.runLabel} · ${bondMeta}${facilityMeta}</div><div class="career-card-meta career-bond-source">${esc(bondSourceLabel(career))} · final bond ${career.finalBond.toFixed(0)}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
+        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${career.runLabel} · ${bondMeta}${facilityMeta}${esc(eventBreakdown(career))}</div><div class="career-card-meta career-bond-source">${esc(bondSourceLabel(career))} · final bond ${career.finalBond.toFixed(0)}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}${eventMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
       })
       .join("");
     wrap.hidden = false;
