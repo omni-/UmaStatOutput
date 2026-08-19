@@ -9,7 +9,7 @@ sync_cards=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(sync_ca
 class SyncCardsTests(unittest.TestCase):
     def test_fixture_pipeline_parses_and_normalizes_upstream_shapes(self):
         cards=sync_cards.extract_json_array((FIXTURES/"cards.js").read_text(encoding="utf-8"));events=sync_cards.extract_events((FIXTURES/"events.js").read_text(encoding="utf-8"),minimum_rows=2);titles,portraits=sync_cards.extract_metadata_from_file((FIXTURES/"metadata.json").read_text(encoding="utf-8"));result=sync_cards.normalize(cards,events,titles,portraits,minimum_rows=2)
-        self.assertEqual([(r["id"],r["limit_break"]) for r in result],[(1001,0),(1002,4)]);self.assertEqual(result[0]["title"],"Fixture Title");self.assertEqual(result[0]["portrait_url"],"https://example.test/1001.png");self.assertEqual(result[0]["event_stats"],[1,2,3,4,5,6,7,8]);self.assertFalse(result[0]["future"]);self.assertIsNone(result[0]["special_uniques"])
+        self.assertEqual([(r["id"],r["limit_break"]) for r in result],[(1001,0),(1002,4)]);self.assertEqual(result[0]["title"],"Fixture Title");self.assertEqual(result[0]["portrait_url"],"https://example.test/1001.png");self.assertEqual(result[0]["event_stats"],[1,2,3,4,5,6,7,8]);self.assertEqual(result[0]["starting_stats"],[10,0,5,0,0]);self.assertEqual(result[1]["starting_stats"],[0,0,0,0,0]);self.assertFalse(result[0]["future"]);self.assertIsNone(result[0]["special_uniques"])
     def test_future_merge_keeps_only_jp_only_ids(self):
         global_cards=[{"id":1001,"type":0,"limit_break":0},{"id":1002,"type":4,"limit_break":0}];jp_cards=[{"id":1001,"type":0,"limit_break":0},{"id":2001,"type":2,"limit_break":0},{"id":2001,"type":2,"limit_break":4}]
         tagged=sync_cards.merge_global_and_future(global_cards,jp_cards)

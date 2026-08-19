@@ -7,6 +7,7 @@ import {
   calculateCardEV,
   calculateMarginalTraining,
   effectiveStartingBond,
+  effectiveStartingStats,
   facilityLevelAtTurn,
   facilityTrainingBonus,
   GLOBAL_UNIQUE_CONTEXT,
@@ -438,7 +439,7 @@ test("a special unique stays disabled until that limit break can reach its unloc
   );
 });
 
-test("locked starting-bond and type-101 flattening are removed", () => {
+test("locked starting stats, starting bond, and type-101 flattening are removed", () => {
   const lockedBond = {
     ...card,
     rarity: 3,
@@ -458,6 +459,17 @@ test("locked starting-bond and type-101 flattening are removed", () => {
       { type: 101, value: 80, value_1: 30, value_2: 1 },
     ],
   };
+  const lockedInitialStats = {
+    ...card,
+    rarity: 3,
+    limit_break: 0,
+    special_unique_level: 35,
+    starting_stats: [25, 0, 20, 0, 0],
+    special_uniques: [
+      { type: 9, value: 20 },
+      { type: 11, value: 20 },
+    ],
+  };
   const baseline = {
     ...lockedType101,
     fs_stats: [0, 0, 0, 0, 0, 0],
@@ -466,6 +478,11 @@ test("locked starting-bond and type-101 flattening are removed", () => {
 
   assert.equal(effectiveStartingBond(lockedBond), 15);
   assert.equal(effectiveStartingBond({ ...lockedBond, limit_break: 1 }), 30);
+  assert.deepEqual(effectiveStartingStats(lockedInitialStats), [5, 0, 0, 0, 0, 0]);
+  assert.deepEqual(
+    effectiveStartingStats({ ...lockedInitialStats, limit_break: 1 }),
+    [25, 0, 20, 0, 0, 0],
+  );
   assert.deepEqual(
     calculateMarginalTraining(lockedType101, 0, {
       gains: TRAINING_PROFILES["gl-late"].gains[0],
@@ -521,7 +538,7 @@ test("starting and event bond bring a card online earlier", () => {
   assert.ok(high.rainbowDays > low.rainbowDays);
 });
 
-test("career projection counts every off-specialty room exactly once", () => {
+test("career projection discounts off-specialty appearances by selection rate", () => {
   const r = calculateCareerProjection(card, {
     globalSpecialty: 20,
     motivation: 0.2,
@@ -531,9 +548,17 @@ test("career projection counts every off-specialty room exactly once", () => {
   assert.equal(r.daysToBond, 20.25);
   assert.equal(r.rainbowDays, 35.75);
   const appearance = calculateAppearance(card, 20);
+  const offSelectionDenominator = card.offstat_appearance_denominator;
   assert.ok(
-    Math.abs(r.offClicks - appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns) <
+    Math.abs(
+      r.offClicks -
+        (appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns) /
+          offSelectionDenominator,
+    ) <
       1e-10,
+  );
+  assert.ok(
+    r.offClicks < appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns,
   );
   assert.ok(
     Math.abs(
@@ -544,6 +569,46 @@ test("career projection counts every off-specialty room exactly once", () => {
   assert.equal(r.finalBond, 100);
   assert.ok(r.rainbowClicks < r.specialtyClicks);
   assert.ok(r.vector.every((value) => value >= 0));
+});
+
+test("career projection adds guaranteed initial stats to the run total", () => {
+  const withoutInitial = calculateCareerProjection({
+    ...card,
+    starting_stats: [0, 0, 0, 0, 0],
+  });
+  const withInitial = calculateCareerProjection({
+    ...card,
+    starting_stats: [30, 0, 15, 0, 0],
+  });
+
+  assert.deepEqual(withInitial.initialVector, [30, 0, 15, 0, 0, 0]);
+  assert.deepEqual(withInitial.trainingVector, withoutInitial.vector);
+  assert.equal(withInitial.vector[0], withoutInitial.vector[0] + 30);
+  assert.equal(withInitial.vector[2], withoutInitial.vector[2] + 15);
+  assert.equal(withInitial.score, withoutInitial.score + 45);
+  assert.equal(withInitial.initialScore, 45);
+});
+
+test("career projection treats missing initial stats as zero", () => {
+  const result = calculateCareerProjection(card);
+
+  assert.deepEqual(result.initialVector, [0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(result.vector, result.trainingVector);
+  assert.equal(result.initialScore, 0);
+  assert.equal(result.score, result.trainingScore);
+});
+
+test("career projection can exclude initial stats from totals", () => {
+  const result = calculateCareerProjection(
+    { ...card, starting_stats: [30, 0, 15, 0, 0] },
+    { includeInitialStats: false },
+  );
+
+  assert.deepEqual(result.initialVector, [30, 0, 15, 0, 0, 0]);
+  assert.deepEqual(result.vector, result.trainingVector);
+  assert.equal(result.score, result.trainingScore);
+  assert.equal(result.initialScore, 45);
+  assert.equal(result.includesInitialStats, false);
 });
 
 test("bond-100 uniques activate in late snapshots and after career bond progression", () => {
