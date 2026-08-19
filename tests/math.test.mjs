@@ -554,6 +554,46 @@ test("career projection discounts off-specialty appearances by selection rate", 
   assert.ok(r.vector.every((value) => value >= 0));
 });
 
+test("career projection adds guaranteed initial stats to the run total", () => {
+  const withoutInitial = calculateCareerProjection({
+    ...card,
+    starting_stats: [0, 0, 0, 0, 0],
+  });
+  const withInitial = calculateCareerProjection({
+    ...card,
+    starting_stats: [30, 0, 15, 0, 0],
+  });
+
+  assert.deepEqual(withInitial.initialVector, [30, 0, 15, 0, 0, 0]);
+  assert.deepEqual(withInitial.trainingVector, withoutInitial.vector);
+  assert.equal(withInitial.vector[0], withoutInitial.vector[0] + 30);
+  assert.equal(withInitial.vector[2], withoutInitial.vector[2] + 15);
+  assert.equal(withInitial.score, withoutInitial.score + 45);
+  assert.equal(withInitial.initialScore, 45);
+});
+
+test("career projection treats missing initial stats as zero", () => {
+  const result = calculateCareerProjection(card);
+
+  assert.deepEqual(result.initialVector, [0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(result.vector, result.trainingVector);
+  assert.equal(result.initialScore, 0);
+  assert.equal(result.score, result.trainingScore);
+});
+
+test("career projection can exclude initial stats from totals", () => {
+  const result = calculateCareerProjection(
+    { ...card, starting_stats: [30, 0, 15, 0, 0] },
+    { includeInitialStats: false },
+  );
+
+  assert.deepEqual(result.initialVector, [30, 0, 15, 0, 0, 0]);
+  assert.deepEqual(result.vector, result.trainingVector);
+  assert.equal(result.score, result.trainingScore);
+  assert.equal(result.initialScore, 45);
+  assert.equal(result.includesInitialStats, false);
+});
+
 test("bond-100 uniques activate in late snapshots and after career bond progression", () => {
   const thresholdUnique = {
     ...card,

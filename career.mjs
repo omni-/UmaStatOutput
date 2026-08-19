@@ -110,6 +110,7 @@ export function calculateCareerProjection(card, options = {}) {
   const motivation = Number(options.motivation ?? 0.2);
   const growth = options.growth || [1, 1, 1, 1, 1, 1];
   const spWeight = Number(options.spWeight ?? profile.spWeight ?? 1.2);
+  const includeInitialStats = options.includeInitialStats !== false;
   const facilityPace = Number(
     options.facilityPace ?? profile.facilityPace ?? 100,
   );
@@ -126,7 +127,7 @@ export function calculateCareerProjection(card, options = {}) {
     run.trainingTurns,
     facilityPace,
   );
-  const vector = new Array(6).fill(0);
+  const trainingVector = new Array(6).fill(0);
   const offSelectionDenominator = Math.max(
     1,
     Number(card.offstat_appearance_denominator || 4),
@@ -169,7 +170,7 @@ export function calculateCareerProjection(card, options = {}) {
       });
       const scenarioScale =
         bonded && specialty ? run.scenarioMultiplier : 1;
-      addScaled(vector, marginal, probability * duration * scenarioScale);
+      addScaled(trainingVector, marginal, probability * duration * scenarioScale);
     }
 
     specialtyClicks += appearance.specialty * duration;
@@ -229,10 +230,23 @@ export function calculateCareerProjection(card, options = {}) {
     card,
     rainbowClicks,
   );
+  const initialVector = new Array(6)
+    .fill(0)
+    .map((_, stat) =>
+      stat < 5 ? Math.max(0, Number(card?.starting_stats?.[stat]) || 0) : 0,
+    );
+  const vector = trainingVector.map(
+    (value, stat) => value + (includeInitialStats ? initialVector[stat] : 0),
+  );
 
   return {
     vector,
+    trainingVector,
+    initialVector,
     score: weightedSum(vector, spWeight),
+    trainingScore: weightedSum(trainingVector, spWeight),
+    initialScore: weightedSum(initialVector, spWeight),
+    includesInitialStats: includeInitialStats,
     daysToBond,
     rainbowDays,
     rainbowClicks,
@@ -276,6 +290,10 @@ function portrait(card) {
   return `<div class="accent-card-thumb small portrait-card-thumb"><img class="card-thumb portrait-thumb" src="${esc(portraitImageUrl(card))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${esc(supportImageUrl(card.id))}'" /></div>`;
 }
 
+function formatInitialStat(value) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
 function initCareerView() {
   const body = document.querySelector("#career-body");
   const wrap = document.querySelector("#career-results");
@@ -293,6 +311,8 @@ function initCareerView() {
       profile: document.querySelector("#training-profile")?.value || "gl-late",
       motivation: Number(document.querySelector("#motivation")?.value ?? 0.2),
       spWeight: Number(document.querySelector("#sp-weight")?.value ?? 1.2),
+      includeInitialStats:
+        document.querySelector("#include-initial-stats")?.checked !== false,
       facilityPace: Number(document.querySelector("#facility-pace")?.value ?? 100),
       growth,
     };
@@ -328,12 +348,23 @@ function initCareerView() {
       .map((row, index) => {
         const { card, career } = row;
         const stats = career.vector
-          .map((value) => `<td><strong>${Number(value).toFixed(1)}</strong></td>`)
+          .map((value, stat) => {
+            const initial = career.includesInitialStats
+              ? career.initialVector[stat]
+              : 0;
+            const initialLabel = initial
+              ? `<span class="career-initial"> (+${formatInitialStat(initial)} initial)</span>`
+              : "";
+            return `<td class="career-stat"><strong>${Number(value).toFixed(1)}</strong>${initialLabel}</td>`;
+          })
           .join("");
         const facilityMeta = hasFacilityLevelUnique(card)
           ? ` · facility ≈ Lv${career.beforeFacilityLevel.toFixed(1)} → Lv${career.afterFacilityLevel.toFixed(1)}`
           : "";
-        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · ${career.runLabel} · bond phase ≈ ${career.daysToBond.toFixed(1)} turns · rainbows ≈ ${career.rainbowClicks.toFixed(1)}${facilityMeta}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
+        const initialMeta = career.includesInitialStats && career.initialScore
+          ? `+${formatInitialStat(career.initialScore)} initial · `
+          : "";
+        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · ${career.runLabel} · bond phase ≈ ${career.daysToBond.toFixed(1)} turns · rainbows ≈ ${career.rainbowClicks.toFixed(1)}${facilityMeta}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
       })
       .join("");
     wrap.hidden = false;
@@ -359,6 +390,7 @@ function initCareerView() {
         "#training-profile",
         "#motivation",
         "#sp-weight",
+        "#include-initial-stats",
         "#facility-pace",
         "#growth-grid",
       ].forEach((selector) => {
@@ -368,9 +400,11 @@ function initCareerView() {
       document.querySelectorAll("[data-spec-preset]").forEach((button) =>
         button.addEventListener("click", () => queueMicrotask(render)),
       );
-      document
-        .querySelector("#reset-settings")
-        ?.addEventListener("click", () => queueMicrotask(render));
+      document.querySelector("#reset-settings")?.addEventListener("click", () => {
+        const includeInitial = document.querySelector("#include-initial-stats");
+        if (includeInitial) includeInitial.checked = true;
+        queueMicrotask(render);
+      });
       document
         .querySelector("#reset-cards")
         ?.addEventListener("click", () => queueMicrotask(render));
