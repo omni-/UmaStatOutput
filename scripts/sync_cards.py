@@ -9,8 +9,8 @@ DEFAULT_JP_URL="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/ma
 DEFAULT_EVENTS_URL="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/main/src/card-events.js"
 DEFAULT_TITLES_URL="https://api.umapyoi.net/api/v1/support"
 DEFAULT_UNIQUES_URL="https://raw.githubusercontent.com/niiyant/uma--guide/main/DB/SOPORTES/supports.json"
-FIELDS=("id","type","rarity","limit_break","char_name","specialty_rate","unique_specialty","fs_specialty","tb","mb","fs_bonus","unique_fs_bonus","stat_bonus","fs_stats","fs_training","fs_motivation","fs_ramp","crowd_bonus","highlander_threshold","highlander_training","fan_bonus","wisdom_recovery","sb","offstat_appearance_denominator")
-DEFAULTS={"specialty_rate":0,"unique_specialty":1,"fs_specialty":1,"tb":1,"mb":1,"fs_bonus":1,"unique_fs_bonus":1,"stat_bonus":[0,0,0,0,0,0],"fs_stats":[0,0,0,0,0,0],"fs_training":0,"fs_motivation":0,"fs_ramp":[0,0],"crowd_bonus":0,"highlander_threshold":99,"highlander_training":0,"fan_bonus":0,"wisdom_recovery":0,"sb":0,"offstat_appearance_denominator":4}
+FIELDS=("id","type","rarity","limit_break","char_name","starting_stats","specialty_rate","unique_specialty","fs_specialty","tb","mb","fs_bonus","unique_fs_bonus","stat_bonus","fs_stats","fs_training","fs_motivation","fs_ramp","crowd_bonus","highlander_threshold","highlander_training","fan_bonus","wisdom_recovery","sb","offstat_appearance_denominator")
+DEFAULTS={"starting_stats":[0,0,0,0,0],"specialty_rate":0,"unique_specialty":1,"fs_specialty":1,"tb":1,"mb":1,"fs_bonus":1,"unique_fs_bonus":1,"stat_bonus":[0,0,0,0,0,0],"fs_stats":[0,0,0,0,0,0],"fs_training":0,"fs_motivation":0,"fs_ramp":[0,0],"crowd_bonus":0,"highlander_threshold":99,"highlander_training":0,"fan_bonus":0,"wisdom_recovery":0,"sb":0,"offstat_appearance_denominator":4}
 EVENT_RE=re.compile(r"^\s*(\d+):\s*(\[[^\]\n]+\])",re.MULTILINE)
 def _jsonify_js_object_literal(text:str):
     out=[];i=0;in_string=False;escaped=False

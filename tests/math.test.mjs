@@ -7,6 +7,7 @@ import {
   calculateCardEV,
   calculateMarginalTraining,
   effectiveStartingBond,
+  effectiveStartingStats,
   facilityLevelAtTurn,
   facilityTrainingBonus,
   GLOBAL_UNIQUE_CONTEXT,
@@ -438,7 +439,7 @@ test("a special unique stays disabled until that limit break can reach its unloc
   );
 });
 
-test("locked starting-bond and type-101 flattening are removed", () => {
+test("locked starting stats, starting bond, and type-101 flattening are removed", () => {
   const lockedBond = {
     ...card,
     rarity: 3,
@@ -458,6 +459,17 @@ test("locked starting-bond and type-101 flattening are removed", () => {
       { type: 101, value: 80, value_1: 30, value_2: 1 },
     ],
   };
+  const lockedInitialStats = {
+    ...card,
+    rarity: 3,
+    limit_break: 0,
+    special_unique_level: 35,
+    starting_stats: [25, 0, 20, 0, 0],
+    special_uniques: [
+      { type: 9, value: 20 },
+      { type: 11, value: 20 },
+    ],
+  };
   const baseline = {
     ...lockedType101,
     fs_stats: [0, 0, 0, 0, 0, 0],
@@ -466,6 +478,11 @@ test("locked starting-bond and type-101 flattening are removed", () => {
 
   assert.equal(effectiveStartingBond(lockedBond), 15);
   assert.equal(effectiveStartingBond({ ...lockedBond, limit_break: 1 }), 30);
+  assert.deepEqual(effectiveStartingStats(lockedInitialStats), [5, 0, 0, 0, 0, 0]);
+  assert.deepEqual(
+    effectiveStartingStats({ ...lockedInitialStats, limit_break: 1 }),
+    [25, 0, 20, 0, 0, 0],
+  );
   assert.deepEqual(
     calculateMarginalTraining(lockedType101, 0, {
       gains: TRAINING_PROFILES["gl-late"].gains[0],

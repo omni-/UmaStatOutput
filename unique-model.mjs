@@ -194,6 +194,7 @@ function lockedFlattenedModifiers(card) {
     rainbowTraining: 0,
     rainbowMotivation: 0,
     stats: new Array(6).fill(0),
+    startingStats: new Array(5).fill(0),
     specialtyFactor: 0,
     startingBond: 0,
   };
@@ -207,6 +208,9 @@ function lockedFlattenedModifiers(card) {
     rainbowMotivation: Math.max(0, n(card?.fs_motivation)),
     specialtyFactor: Math.max(0, n(card?.unique_specialty, 1) - 1),
     startingBond: Math.max(0, n(card?.sb)),
+    startingStats: new Array(5)
+      .fill(0)
+      .map((_, stat) => Math.max(0, n(card?.starting_stats?.[stat]))),
     stats: new Array(6)
       .fill(0)
       .map((_, stat) => Math.max(0, n(card?.stat_bonus?.[stat]))),
@@ -221,6 +225,14 @@ function lockedFlattenedModifiers(card) {
     result.stats[stat] -= amount;
     available.stats[stat] -= amount;
   };
+  const subtractStartingStat = (stat, value) => {
+    const amount = Math.min(
+      available.startingStats[stat],
+      Math.max(0, value),
+    );
+    result.startingStats[stat] -= amount;
+    available.startingStats[stat] -= amount;
+  };
 
   for (const effect of allEffects(card)) {
     const type = Number(effect?.type);
@@ -229,6 +241,8 @@ function lockedFlattenedModifiers(card) {
     else if (type === 2) subtract("motivation", value / 100);
     else if (type >= 3 && type <= 7) subtractStat(type - 3, value);
     else if (type === 8) subtract("training", value / 100);
+    else if (type >= 9 && type <= 13)
+      subtractStartingStat(type - 9, value);
     else if (type === 14) subtract("startingBond", value);
     else if (type === 19) {
       const amount = Math.min(
@@ -250,6 +264,18 @@ function lockedFlattenedModifiers(card) {
 export function effectiveStartingBond(card) {
   const locked = lockedFlattenedModifiers(card);
   return Math.max(0, n(card?.sb) + locked.startingBond);
+}
+
+export function effectiveStartingStats(card) {
+  const locked = lockedFlattenedModifiers(card);
+  return new Array(6).fill(0).map((_, stat) =>
+    stat < 5
+      ? Math.max(
+          0,
+          n(card?.starting_stats?.[stat]) + locked.startingStats[stat],
+        )
+      : 0,
+  );
 }
 
 export function specialUniqueTypes(card) {

@@ -4,6 +4,7 @@ import {
   weightedSum,
   averageFacilityLevel,
   effectiveStartingBond,
+  effectiveStartingStats,
   facilityLevelAtTurn,
   GLOBAL_UNIQUE_CONTEXT,
   hasFacilityLevelUnique,
@@ -230,11 +231,7 @@ export function calculateCareerProjection(card, options = {}) {
     card,
     rainbowClicks,
   );
-  const initialVector = new Array(6)
-    .fill(0)
-    .map((_, stat) =>
-      stat < 5 ? Math.max(0, Number(card?.starting_stats?.[stat]) || 0) : 0,
-    );
+  const initialVector = effectiveStartingStats(card);
   const vector = trainingVector.map(
     (value, stat) => value + (includeInitialStats ? initialVector[stat] : 0),
   );
