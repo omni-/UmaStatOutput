@@ -154,6 +154,11 @@ function type101Modifiers(card, bond) {
         flattened.training += value / 100;
         if (destination) destination.training += value / 100;
       } else if (bonusType === 19) {
+        // The two sides intentionally use different units. `flattened` is
+        // compared against `fs_specialty - 1`, a multiplier delta, so the raw
+        // percentage is scaled down. `active` flows into
+        // `conditionalSpecialtyRate`, which is summed with the raw specialty
+        // rate points in `calculateAppearance`, so it stays unscaled.
         flattened.specialty += value / 100;
         if (destination) destination.specialty += value;
       }

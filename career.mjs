@@ -17,6 +17,9 @@ import {
 } from "./app.mjs";
 import { averageFriendshipTrainingsForCareer } from "./unique-model.mjs";
 
+// Bonded gains are the same table the per-click comparison uses, so the two
+// views cannot drift apart. Only the unbonded (pre-rainbow) phase is unique to
+// the whole-run projection.
 export const GRAND_LIVE_RUN = {
   label: "Grand Live",
   trainingTurns: 56,
@@ -30,13 +33,7 @@ export const GRAND_LIVE_RUN = {
     [2, 0, 2, 7, 0, 2],
     [2, 0, 0, 0, 6, 3],
   ],
-  bondedGains: [
-    [11, 0, 5, 0, 0, 2],
-    [0, 9, 0, 6, 0, 2],
-    [0, 4, 10, 0, 0, 2],
-    [3, 0, 2, 10, 0, 2],
-    [3, 0, 0, 0, 9, 3],
-  ],
+  bondedGains: TRAINING_PROFILES["gl-late"].gains,
 };
 
 export const UNITY_CUP_RUN = {
@@ -52,18 +49,21 @@ export const UNITY_CUP_RUN = {
     [3, 0, 3, 6, 0, 4],
     [2, 0, 0, 0, 6, 5],
   ],
-  bondedGains: [
-    [12, 0, 5, 0, 0, 4],
-    [0, 12, 0, 7, 0, 4],
-    [0, 5, 13, 0, 0, 4],
-    [4, 0, 3, 10, 0, 4],
-    [3, 0, 0, 0, 10, 5],
-  ],
+  bondedGains: TRAINING_PROFILES["unity-late"].gains,
+};
+
+// Summer camp is a short window inside a Grand Live career rather than a
+// whole-run training state, so there is no 56-turn summer gains table to
+// project from. The projection deliberately falls back to late-run values; the
+// label carries that substitution into the results table so it is not silent.
+export const GRAND_LIVE_SUMMER_RUN = {
+  ...GRAND_LIVE_RUN,
+  label: "Grand Live (late-run gains)",
 };
 
 export const RUN_PROFILES = {
   "gl-late": GRAND_LIVE_RUN,
-  "gl-summer": GRAND_LIVE_RUN,
+  "gl-summer": GRAND_LIVE_SUMMER_RUN,
   "unity-late": UNITY_CUP_RUN,
 };
 

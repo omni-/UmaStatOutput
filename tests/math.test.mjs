@@ -17,6 +17,7 @@ import {
 } from "../app.mjs";
 import {
   GRAND_LIVE_RUN,
+  GRAND_LIVE_SUMMER_RUN,
   UNITY_CUP_RUN,
   calculateCareerProjection,
 } from "../career.mjs";
@@ -711,4 +712,20 @@ test("Unity Cup career projection uses Unity Cup run values", () => {
   assert.equal(r.turnsPerFacilityLevel, 16);
   assert.equal(UNITY_CUP_RUN.scenarioMultiplier, 1);
   assert.deepEqual(UNITY_CUP_RUN.bondedGains[0], [12, 0, 5, 0, 0, 4]);
+});
+
+test("run bonded gains stay tied to the per-click training profiles", () => {
+  assert.deepEqual(GRAND_LIVE_RUN.bondedGains, TRAINING_PROFILES["gl-late"].gains);
+  assert.deepEqual(UNITY_CUP_RUN.bondedGains, TRAINING_PROFILES["unity-late"].gains);
+});
+
+test("summer profile projects with late-run gains under a label that says so", () => {
+  const summer = calculateCareerProjection(card, { profile: "gl-summer" });
+  const late = calculateCareerProjection(card, { profile: "gl-late" });
+
+  assert.equal(summer.profileKey, "gl-summer");
+  assert.equal(summer.runLabel, "Grand Live (late-run gains)");
+  assert.notEqual(summer.runLabel, late.runLabel);
+  assert.deepEqual(GRAND_LIVE_SUMMER_RUN.bondedGains, GRAND_LIVE_RUN.bondedGains);
+  assert.equal(summer.score, late.score);
 });
