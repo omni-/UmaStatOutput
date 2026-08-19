@@ -2,29 +2,34 @@ import {
   calculateAppearance,
   calculateMarginalTraining,
   weightedSum,
+  normalizeStatWeights,
   averageFacilityLevel,
+  DEFAULT_PASSIVE_BOND_PER_TURN,
   effectiveStartingBond,
   effectiveStartingStats,
   facilityLevelAtTurn,
+  hasTrainingSpecialty,
+  typeLabel,
   GLOBAL_UNIQUE_CONTEXT,
+  RAINBOW_BOND_THRESHOLD,
   hasFacilityLevelUnique,
   turnsPerFacilityLevel,
+  uniqueModelWarnings,
   RARITY_NAMES,
-  TYPE_NAMES,
   TRAINING_PROFILES,
   portraitImageUrl,
-  supportImageUrl,
+  remoteSupportImageUrl,
 } from "./app.mjs";
 import { averageFriendshipTrainingsForCareer } from "./unique-model.mjs";
+import { loadCards } from "./data.mjs";
+import { SETTINGS_EVENT, readSharedSettings } from "./settings.mjs";
 
 // Bonded gains are the same table the per-click comparison uses, so the two
-// views cannot drift apart. Only the unbonded (pre-rainbow) phase is unique to
-// the whole-run projection.
+// views cannot drift apart. Only the early-run (low facility) phase is unique
+// to the whole-run projection.
 export const GRAND_LIVE_RUN = {
   label: "Grand Live",
   trainingTurns: 56,
-  bondPerTurn: 20,
-  deckBondTarget: 75 * 6,
   scenarioMultiplier: 1.4,
   unbondedGains: [
     [8, 0, 4, 0, 0, 2],
@@ -39,8 +44,6 @@ export const GRAND_LIVE_RUN = {
 export const UNITY_CUP_RUN = {
   label: "Unity Cup",
   trainingTurns: 56,
-  bondPerTurn: 20,
-  deckBondTarget: 75 * 6,
   scenarioMultiplier: 1,
   unbondedGains: [
     [8, 0, 4, 0, 0, 4],
@@ -67,42 +70,51 @@ export const RUN_PROFILES = {
   "unity-late": UNITY_CUP_RUN,
 };
 
+const BOND_PER_SELECTED_TRAINING = 5;
+
+export { DEFAULT_PASSIVE_BOND_PER_TURN };
+
+// Longest slice the projection integrates in one step. Appearance, facility
+// level, and bond-gated uniques all move continuously through a run, so each
+// slice is sampled at its midpoint and kept short enough that the drift inside
+// it stays negligible.
+const MAX_SEGMENT_TURNS = 2;
+
 function eventInfo(card) {
   if (Array.isArray(card.event_stats) && card.event_stats.length >= 8)
     return {
       bond: Number(card.event_stats[7] || 0),
       source: "upstream event data",
     };
-  if (Number(card.rarity) >= 2)
-    return { bond: 5, source: "rarity fallback" };
+  if (Number(card.rarity) >= 2) return { bond: 5, source: "rarity fallback" };
   return { bond: 0, source: "no event estimate" };
 }
 
 function addScaled(target, values, scale) {
-  for (let i = 0; i < 6; i++)
-    target[i] += Number(values[i] || 0) * scale;
+  for (let i = 0; i < 6; i++) target[i] += Number(values[i] || 0) * scale;
 }
 
-const BOND_PER_SELECTED_TRAINING = 5;
+/**
+ * Turn at which the run switches from early-run to late-run base training
+ * values. Base gains grow with facility level, so the switch follows the
+ * facility pace rather than the card's own bond.
+ */
+export function baseGainsSwitchTurn(run, facilityPace = 100) {
+  return Math.min(run.trainingTurns, 3 * turnsPerFacilityLevel(facilityPace));
+}
 
-function careerContextAt(turn, daysToBond, run, options) {
+function careerContextAt(turn, run, options) {
   const runProgress = Math.max(0, Math.min(1, turn / run.trainingTurns));
-  const bondProgress = Math.max(
-    0,
-    Math.min(1, turn / Math.max(1, daysToBond)),
-  );
   return {
     fans: Number(options.fans ?? GLOBAL_UNIQUE_CONTEXT.fans) * runProgress,
     totalBond:
-      Number(options.totalBond ?? GLOBAL_UNIQUE_CONTEXT.totalBond) * bondProgress,
+      Number(options.totalBond ?? GLOBAL_UNIQUE_CONTEXT.totalBond) * runProgress,
   };
 }
 
 export function calculateCareerProjection(card, options = {}) {
   const profileKey =
-    options.profile && RUN_PROFILES[options.profile]
-      ? options.profile
-      : "gl-late";
+    options.profile && RUN_PROFILES[options.profile] ? options.profile : "gl-late";
   const run = RUN_PROFILES[profileKey];
   const profile = TRAINING_PROFILES[profileKey] || TRAINING_PROFILES["gl-late"];
   const globalSpecialty = Number(
@@ -111,122 +123,128 @@ export function calculateCareerProjection(card, options = {}) {
   const motivation = Number(options.motivation ?? 0.2);
   const growth = options.growth || [1, 1, 1, 1, 1, 1];
   const spWeight = Number(options.spWeight ?? profile.spWeight ?? 1.2);
+  const statWeights = normalizeStatWeights(options.statWeights);
   const includeInitialStats = options.includeInitialStats !== false;
-  const facilityPace = Number(
-    options.facilityPace ?? profile.facilityPace ?? 100,
-  );
-  const event = eventInfo(card);
-  const bondNeeded = Math.max(
+  const facilityPace = Number(options.facilityPace ?? profile.facilityPace ?? 100);
+  const passiveBondPerTurn = Math.max(
     0,
-    run.deckBondTarget - effectiveStartingBond(card) - event.bond,
+    Number(options.passiveBondPerTurn ?? DEFAULT_PASSIVE_BOND_PER_TURN),
   );
-  const daysToBond = Math.min(run.trainingTurns, bondNeeded / run.bondPerTurn);
-  const rainbowDays = Math.max(0, run.trainingTurns - daysToBond);
-  const beforeFacilityLevel = averageFacilityLevel(0, daysToBond, facilityPace);
-  const afterFacilityLevel = averageFacilityLevel(
-    daysToBond,
-    run.trainingTurns,
-    facilityPace,
-  );
-  const trainingVector = new Array(6).fill(0);
+  const specialty = hasTrainingSpecialty(card);
+  const cardType = Number(card.type);
+  const event = eventInfo(card);
+  const startingBond = effectiveStartingBond(card);
+  const switchTurn = baseGainsSwitchTurn(run, facilityPace);
   const offSelectionDenominator = Math.max(
     1,
     Number(card.offstat_appearance_denominator || 4),
   );
-  let cardBond = rainbowDays > 0 ? 80 : 0;
+
+  const trainingVector = new Array(6).fill(0);
+  let bond = Math.min(100, startingBond + event.bond);
   let rainbowClicks = 0;
   let specialtyClicks = 0;
   let offClicks = 0;
+  let bondedAtTurn = bond >= RAINBOW_BOND_THRESHOLD ? 0 : null;
+  let turn = 0;
 
-  const addSegment = (startTurn, duration, bonded) => {
-    const midpoint = startTurn + duration / 2;
-    const dynamicContext = careerContextAt(midpoint, daysToBond, run, options);
-    const appearance = calculateAppearance(card, globalSpecialty, {
+  const appearanceAt = (sampleTurn, bondValue) =>
+    calculateAppearance(card, globalSpecialty, {
       ...options,
-      ...dynamicContext,
-      bond: bonded ? cardBond : 0,
+      ...careerContextAt(sampleTurn, run, options),
+      bond: bondValue,
     });
-    const expectedRainbowClicks = bonded
-      ? appearance.specialty * duration
+
+  while (turn < run.trainingTurns) {
+    const facilityLevel = facilityLevelAtTurn(turn, facilityPace);
+    const turnsPerLevel = turnsPerFacilityLevel(facilityPace);
+    const nextFacilityTurn =
+      facilityLevel >= 5 ? Infinity : facilityLevel * turnsPerLevel;
+    const nextGainsTurn = turn < switchTurn ? switchTurn : Infinity;
+    const rainbowing = specialty && bond >= RAINBOW_BOND_THRESHOLD;
+    const appearance = appearanceAt(turn, bond);
+    const offRate = (appearance.eachOff * (specialty ? 4 : 5)) /
+      offSelectionDenominator;
+    const selectedRate = (specialty ? appearance.specialty : 0) + offRate;
+    const bondRate =
+      BOND_PER_SELECTED_TRAINING * selectedRate + passiveBondPerTurn;
+    const turnsToBond =
+      bond < RAINBOW_BOND_THRESHOLD && bondRate > 0
+        ? (RAINBOW_BOND_THRESHOLD - bond) / bondRate
+        : Infinity;
+
+    const duration = Math.min(
+      run.trainingTurns - turn,
+      MAX_SEGMENT_TURNS,
+      nextFacilityTurn - turn,
+      nextGainsTurn - turn,
+      turnsToBond > 0 ? turnsToBond : MAX_SEGMENT_TURNS,
+    );
+    if (!(duration > 0)) break;
+
+    const midpoint = turn + duration / 2;
+    const dynamicContext = careerContextAt(midpoint, run, options);
+    const midAppearance = appearanceAt(midpoint, bond);
+    const gains = turn >= switchTurn ? run.bondedGains : run.unbondedGains;
+    const expectedRainbowClicks = rainbowing
+      ? midAppearance.specialty * duration
       : 0;
-    const friendshipTrainings =
-      rainbowClicks + expectedRainbowClicks / 2;
-    const gains = bonded ? run.bondedGains : run.unbondedGains;
+    const friendshipTrainings = rainbowClicks + expectedRainbowClicks / 2;
 
     for (let training = 0; training < 5; training++) {
-      const specialty = training === Number(card.type);
-      const probability = specialty
-        ? appearance.specialty
-        : appearance.eachOff / offSelectionDenominator;
+      const onSpecialty = specialty && training === cardType;
+      const probability = onSpecialty
+        ? midAppearance.specialty
+        : midAppearance.eachOff / offSelectionDenominator;
       const marginal = calculateMarginalTraining(card, training, {
         ...options,
         ...dynamicContext,
         gains: gains[training],
         motivation,
         growth,
-        rainbow: bonded && specialty,
-        bond: bonded ? cardBond : 0,
+        rainbow: rainbowing && onSpecialty,
+        bond,
         friendshipTrainings,
         facilityLevel: facilityLevelAtTurn(midpoint, facilityPace),
       });
       const scenarioScale =
-        bonded && specialty ? run.scenarioMultiplier : 1;
+        rainbowing && onSpecialty ? run.scenarioMultiplier : 1;
       addScaled(trainingVector, marginal, probability * duration * scenarioScale);
     }
 
-    specialtyClicks += appearance.specialty * duration;
+    if (specialty) specialtyClicks += midAppearance.specialty * duration;
     offClicks +=
-      (appearance.eachOff * 4 * duration) / offSelectionDenominator;
-    if (bonded) rainbowClicks += expectedRainbowClicks;
-    return (
-      appearance.specialty +
-      (appearance.eachOff * 4) / offSelectionDenominator
+      (midAppearance.eachOff * (specialty ? 4 : 5) * duration) /
+      offSelectionDenominator;
+    rainbowClicks += expectedRainbowClicks;
+
+    const midSelectedRate =
+      (specialty ? midAppearance.specialty : 0) +
+      (midAppearance.eachOff * (specialty ? 4 : 5)) / offSelectionDenominator;
+    bond = Math.min(
+      100,
+      bond +
+        (BOND_PER_SELECTED_TRAINING * midSelectedRate + passiveBondPerTurn) *
+          duration,
     );
-  };
-
-  for (let turn = 0; turn < run.trainingTurns; turn++) {
-    const turnEnd = turn + 1;
-    const preBondEnd = Math.min(turnEnd, daysToBond);
-    if (preBondEnd > turn) addSegment(turn, preBondEnd - turn, false);
-
-    let cursor = Math.max(turn, daysToBond);
-    let remaining = turnEnd - cursor;
-    while (remaining > 1e-10) {
-      const dynamicContext = careerContextAt(cursor, daysToBond, run, options);
-      const appearance = calculateAppearance(card, globalSpecialty, {
-        ...options,
-        ...dynamicContext,
-        bond: cardBond,
-      });
-      const clickRate =
-        appearance.specialty +
-        (appearance.eachOff * 4) / offSelectionDenominator;
-      const turnsToMaxBond =
-        cardBond < 100 && clickRate > 0
-          ? (100 - cardBond) / (BOND_PER_SELECTED_TRAINING * clickRate)
-          : Infinity;
-      const duration = Math.min(remaining, turnsToMaxBond);
-      const selectedRate = addSegment(cursor, duration, true);
-      cardBond = Math.min(
-        100,
-        cardBond + BOND_PER_SELECTED_TRAINING * selectedRate * duration,
-      );
-      cursor += duration;
-      remaining -= duration;
-      if (turnsToMaxBond <= duration + 1e-10) cardBond = 100;
-    }
+    turn += duration;
+    if (bondedAtTurn === null && bond >= RAINBOW_BOND_THRESHOLD)
+      bondedAtTurn = turn;
   }
 
-  const beforeAppearance = calculateAppearance(card, globalSpecialty, {
-    ...options,
-    ...careerContextAt(0, daysToBond, run, options),
-    bond: 0,
-  });
-  const afterAppearance = calculateAppearance(card, globalSpecialty, {
-    ...options,
-    ...careerContextAt(run.trainingTurns, daysToBond, run, options),
-    bond: cardBond,
-  });
+  const daysToBond = bondedAtTurn === null ? run.trainingTurns : bondedAtTurn;
+  const rainbowDays = specialty ? Math.max(0, run.trainingTurns - daysToBond) : 0;
+  const beforeFacilityLevel = averageFacilityLevel(0, daysToBond, facilityPace);
+  const afterFacilityLevel = averageFacilityLevel(
+    daysToBond,
+    run.trainingTurns,
+    facilityPace,
+  );
+  const beforeAppearance = appearanceAt(
+    0,
+    Math.min(startingBond + event.bond, RAINBOW_BOND_THRESHOLD - 1),
+  );
+  const afterAppearance = appearanceAt(run.trainingTurns, bond);
   const averageFriendshipTrainings = averageFriendshipTrainingsForCareer(
     card,
     rainbowClicks,
@@ -240,16 +258,20 @@ export function calculateCareerProjection(card, options = {}) {
     vector,
     trainingVector,
     initialVector,
-    score: weightedSum(vector, spWeight),
-    trainingScore: weightedSum(trainingVector, spWeight),
-    initialScore: weightedSum(initialVector, spWeight),
+    score: weightedSum(vector, spWeight, statWeights),
+    trainingScore: weightedSum(trainingVector, spWeight, statWeights),
+    initialScore: weightedSum(initialVector, spWeight, statWeights),
     includesInitialStats: includeInitialStats,
+    hasSpecialty: specialty,
     daysToBond,
     rainbowDays,
     rainbowClicks,
     specialtyClicks,
     offClicks,
-    finalBond: cardBond,
+    startingBond,
+    eventBond: event.bond,
+    passiveBondPerTurn,
+    finalBond: bond,
     appearance: afterAppearance,
     beforeAppearance,
     afterAppearance,
@@ -257,6 +279,7 @@ export function calculateCareerProjection(card, options = {}) {
     profileKey,
     runLabel: run.label,
     facilityPace,
+    baseGainsSwitchTurn: switchTurn,
     turnsPerFacilityLevel: turnsPerFacilityLevel(facilityPace),
     beforeFacilityLevel,
     afterFacilityLevel,
@@ -284,11 +307,22 @@ function title(card) {
     : "";
 }
 function portrait(card) {
-  return `<div class="accent-card-thumb small portrait-card-thumb"><img class="card-thumb portrait-thumb" src="${esc(portraitImageUrl(card))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${esc(supportImageUrl(card.id))}'" /></div>`;
+  return `<div class="accent-card-thumb small portrait-card-thumb"><img class="card-thumb portrait-thumb" src="${esc(portraitImageUrl(card))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${esc(remoteSupportImageUrl(card.id))}'" /></div>`;
 }
 
 function formatInitialStat(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/** Human-readable description of where a card's bond timing came from. */
+export function bondSourceLabel(career) {
+  const eventLabel =
+    career.eventSource === "upstream event data"
+      ? "event bond"
+      : career.eventSource === "rarity fallback"
+        ? "estimated event bond"
+        : "no event bond";
+  return `bond ${career.startingBond.toFixed(0)} start + ${career.eventBond.toFixed(0)} ${eventLabel}`;
 }
 
 function initCareerView() {
@@ -297,23 +331,6 @@ function initCareerView() {
   const selectedRoot = document.querySelector("#selected-cards");
   if (!body || !wrap || !selectedRoot) return;
   let payload = null;
-
-  function readSettings() {
-    const growth = [0, 1, 2, 3, 4].map(
-      (i) => 1 + Number(document.querySelector(`#growth-${i}`)?.value || 0) / 100,
-    );
-    growth.push(1);
-    return {
-      globalSpecialty: Number(document.querySelector("#global-spec")?.value || 0),
-      profile: document.querySelector("#training-profile")?.value || "gl-late",
-      motivation: Number(document.querySelector("#motivation")?.value ?? 0.2),
-      spWeight: Number(document.querySelector("#sp-weight")?.value ?? 1.2),
-      includeInitialStats:
-        document.querySelector("#include-initial-stats")?.checked !== false,
-      facilityPace: Number(document.querySelector("#facility-pace")?.value ?? 100),
-      growth,
-    };
-  }
 
   function selectedCards() {
     if (!payload) return [];
@@ -337,13 +354,17 @@ function initCareerView() {
       body.innerHTML = "";
       return;
     }
-    const options = readSettings();
+    const options = readSharedSettings(document);
     const rows = cards
-      .map((card) => ({ card, career: calculateCareerProjection(card, options) }))
+      .map((card) => ({
+        card,
+        career: calculateCareerProjection(card, options),
+        flags: uniqueModelWarnings(card, options.profile),
+      }))
       .sort((a, b) => b.career.score - a.career.score);
     body.innerHTML = rows
       .map((row, index) => {
-        const { card, career } = row;
+        const { card, career, flags } = row;
         const stats = career.vector
           .map((value, stat) => {
             const initial = career.includesInitialStats
@@ -358,20 +379,23 @@ function initCareerView() {
         const facilityMeta = hasFacilityLevelUnique(card)
           ? ` · facility ≈ Lv${career.beforeFacilityLevel.toFixed(1)} → Lv${career.afterFacilityLevel.toFixed(1)}`
           : "";
-        const initialMeta = career.includesInitialStats && career.initialScore
-          ? `+${formatInitialStat(career.initialScore)} initial · `
+        const initialMeta =
+          career.includesInitialStats && career.initialScore
+            ? `+${formatInitialStat(career.initialScore)} initial · `
+            : "";
+        const bondMeta = career.hasSpecialty
+          ? `bond phase ≈ ${career.daysToBond.toFixed(1)} turns · rainbows ≈ ${career.rainbowClicks.toFixed(1)}`
+          : "no specialty training · never rainbows";
+        const warnMark = flags.length
+          ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>'
           : "";
-        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${TYPE_NAMES[card.type]} · ${lbLabel(card.limit_break)} · ${career.runLabel} · bond phase ≈ ${career.daysToBond.toFixed(1)} turns · rainbows ≈ ${career.rainbowClicks.toFixed(1)}${facilityMeta}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
+        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${career.runLabel} · ${bondMeta}${facilityMeta}</div><div class="career-card-meta career-bond-source">${esc(bondSourceLabel(career))} · final bond ${career.finalBond.toFixed(0)}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
       })
       .join("");
     wrap.hidden = false;
   }
 
-  fetch("./data/cards.json", { cache: "no-cache" })
-    .then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.json();
-    })
+  loadCards()
     .then((data) => {
       payload = data;
       render();
@@ -381,30 +405,7 @@ function initCareerView() {
         attributes: true,
       });
       selectedRoot.addEventListener("change", render);
-      [
-        "#global-spec",
-        "#global-spec-range",
-        "#training-profile",
-        "#motivation",
-        "#sp-weight",
-        "#include-initial-stats",
-        "#facility-pace",
-        "#growth-grid",
-      ].forEach((selector) => {
-        const el = document.querySelector(selector);
-        if (el) el.addEventListener("input", () => queueMicrotask(render));
-      });
-      document.querySelectorAll("[data-spec-preset]").forEach((button) =>
-        button.addEventListener("click", () => queueMicrotask(render)),
-      );
-      document.querySelector("#reset-settings")?.addEventListener("click", () => {
-        const includeInitial = document.querySelector("#include-initial-stats");
-        if (includeInitial) includeInitial.checked = true;
-        queueMicrotask(render);
-      });
-      document
-        .querySelector("#reset-cards")
-        ?.addEventListener("click", () => queueMicrotask(render));
+      document.addEventListener(SETTINGS_EVENT, render);
     })
     .catch((error) => {
       console.error("Career projection data failed to load", error);

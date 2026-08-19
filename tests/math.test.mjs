@@ -11,16 +11,24 @@ import {
   facilityLevelAtTurn,
   facilityTrainingBonus,
   GLOBAL_UNIQUE_CONTEXT,
+  portraitImageUrl,
+  remoteSupportImageUrl,
   specialUniqueUnlocked,
+  supportImageUrl,
+  trainingValue,
   turnsPerFacilityLevel,
+  typeLabel,
   uniqueModelWarnings,
 } from "../app.mjs";
 import {
   GRAND_LIVE_RUN,
   GRAND_LIVE_SUMMER_RUN,
   UNITY_CUP_RUN,
+  baseGainsSwitchTurn,
+  bondSourceLabel,
   calculateCareerProjection,
 } from "../career.mjs";
+import { calculateDeckProjection } from "../deck.mjs";
 import { resolveUniqueModifiers } from "../unique-model.mjs";
 
 const card = {
@@ -107,7 +115,7 @@ test("known rainbow marginal vector is numerically pinned", () => {
   });
   assert.deepEqual(
     vector.map((value) => Number(value.toFixed(6))),
-    [10.90888, 0, 4.1287, 0, 0, 1.65148],
+    [8.70888, 0, 3.1287, 0, 0, 1.25148],
   );
 });
 
@@ -120,7 +128,82 @@ test("known pre-bond marginal vector is numerically pinned", () => {
   });
   assert.deepEqual(
     vector.map((value) => Number(value.toFixed(6))),
-    [5.69305, 0, 2.0858, 0, 0, 1.0429],
+    [4.09305, 0, 1.2858, 0, 0, 0.6429],
+  );
+});
+
+test("marginal value is measured against the same click without the card", () => {
+  const gains = [11, 0, 5, 0, 0, 2];
+  const options = { gains, motivation: 0.2, growth: [1, 1, 1, 1, 1, 1] };
+  const marginal = calculateMarginalTraining(card, 0, options);
+  const withCard = trainingValue([{ card, rainbow: false }], {
+    ...options,
+    trainingType: 0,
+  });
+  const withoutCard = trainingValue([], { ...options, trainingType: 0 });
+
+  // The empty room still gets the trainee's own mood multiplier, so the card is
+  // never credited with output that happens without it.
+  assert.equal(withoutCard[0], gains[0] * 1.2);
+  assert.ok(Math.abs(marginal[0] - (withCard[0] - withoutCard[0])) < 1e-12);
+});
+
+test("uma growth scales the card's own contribution, not the base gain", () => {
+  const options = { gains: [11, 0, 5, 0, 0, 2], motivation: 0.2, rainbow: true };
+  const flat = calculateMarginalTraining(card, 0, options);
+  const grown = calculateMarginalTraining(card, 0, {
+    ...options,
+    growth: [1.2, 1, 1, 1, 1, 1],
+  });
+  assert.ok(Math.abs(grown[0] - flat[0] * 1.2) < 1e-12);
+});
+
+test("a busier training raises the crowd multiplier on both sides", () => {
+  const options = { gains: [11, 0, 5, 0, 0, 2], motivation: 0.2, rainbow: true };
+  const solo = calculateMarginalTraining(card, 0, {
+    ...options,
+    supportsOnTraining: 1,
+  });
+  const crowded = calculateMarginalTraining(card, 0, {
+    ...options,
+    supportsOnTraining: 3,
+  });
+  assert.ok(crowded[0] > solo[0]);
+
+  // A support with no bonuses at all is worth exactly the 5% it adds to the
+  // crowd multiplier, whichever side of it the other bodies sit on.
+  const inert = {
+    ...card,
+    tb: 1,
+    mb: 1,
+    fs_bonus: 1,
+    unique_fs_bonus: 1,
+    stat_bonus: [0, 0, 0, 0, 0, 0],
+  };
+  const baseValue = 11 * 1.2;
+  for (const supportsOnTraining of [1, 2, 5]) {
+    const vector = calculateMarginalTraining(inert, 0, {
+      ...options,
+      supportsOnTraining,
+    });
+    assert.ok(Math.abs(vector[0] - baseValue * 0.05) < 1e-12);
+  }
+});
+
+test("friendship specialty priority only applies while the card is bonded", () => {
+  const friendshipSpecialty = { ...card, fs_specialty: 1.35 };
+  const unbonded = calculateAppearance(friendshipSpecialty, 20, { bond: 0 });
+  const bonded = calculateAppearance(friendshipSpecialty, 20, { bond: 100 });
+  assert.ok(unbonded.specialty < bonded.specialty);
+  assert.equal(unbonded.friendshipSpecialtyActive, false);
+  assert.equal(bonded.friendshipSpecialtyActive, true);
+  assert.ok(
+    Math.abs(unbonded.specialtyWeight - bonded.specialtyWeight / 1.35) < 1e-9,
+  );
+  // A card without the friendship multiplier is unaffected by bond.
+  assert.equal(
+    calculateAppearance(card, 20, { bond: 0 }).specialty,
+    calculateAppearance(card, 20, { bond: 100 }).specialty,
   );
 });
 
@@ -558,30 +641,135 @@ test("career projection discounts off-specialty appearances by selection rate", 
     growth: [1, 1, 1, 1, 1, 1],
     spWeight: 1,
   });
-  assert.equal(r.daysToBond, 20.25);
-  assert.equal(r.rainbowDays, 35.75);
-  const appearance = calculateAppearance(card, 20);
+  const appearance = calculateAppearance(card, 20, { bond: 100 });
   const offSelectionDenominator = card.offstat_appearance_denominator;
   assert.ok(
     Math.abs(
       r.offClicks -
         (appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns) /
           offSelectionDenominator,
-    ) <
-      1e-10,
+    ) < 1e-9,
   );
   assert.ok(
     r.offClicks < appearance.eachOff * 4 * GRAND_LIVE_RUN.trainingTurns,
   );
   assert.ok(
     Math.abs(
-      r.specialtyClicks -
-        appearance.specialty * GRAND_LIVE_RUN.trainingTurns,
-    ) < 1e-10,
+      r.specialtyClicks - appearance.specialty * GRAND_LIVE_RUN.trainingTurns,
+    ) < 1e-9,
   );
   assert.equal(r.finalBond, 100);
   assert.ok(r.rainbowClicks < r.specialtyClicks);
   assert.ok(r.vector.every((value) => value >= 0));
+});
+
+test("bond timing follows how often the card is actually picked", () => {
+  const options = { globalSpecialty: 20 };
+  const preferred = calculateCareerProjection(
+    { ...card, sb: 0, event_stats: [0, 0, 0, 0, 0, 0, 0, 0], specialty_rate: 80 },
+    options,
+  );
+  const ignored = calculateCareerProjection(
+    { ...card, sb: 0, event_stats: [0, 0, 0, 0, 0, 0, 0, 0], specialty_rate: 0 },
+    options,
+  );
+  assert.ok(preferred.daysToBond < ignored.daysToBond);
+  assert.ok(preferred.rainbowClicks > ignored.rainbowClicks);
+});
+
+test("a card that never reaches the bond threshold never rainbows", () => {
+  const stranded = calculateCareerProjection(
+    { ...card, sb: 0, event_stats: [0, 0, 0, 0, 0, 0, 0, 0] },
+    { globalSpecialty: 20, passiveBondPerTurn: 0, offstatOnly: true },
+  );
+  const unreachable = calculateCareerProjection(
+    {
+      ...card,
+      sb: 0,
+      specialty_rate: -100,
+      unique_specialty: 0,
+      event_stats: [0, 0, 0, 0, 0, 0, 0, 0],
+      offstat_appearance_denominator: 10000,
+    },
+    { globalSpecialty: 0, passiveBondPerTurn: 0 },
+  );
+  assert.ok(stranded.rainbowClicks > 0);
+  assert.equal(unreachable.rainbowClicks, 0);
+  assert.equal(unreachable.rainbowDays, 0);
+  assert.equal(unreachable.daysToBond, GRAND_LIVE_RUN.trainingTurns);
+  assert.ok(unreachable.finalBond < 80);
+});
+
+test("base training values switch with facility pace, not with card bond", () => {
+  assert.equal(baseGainsSwitchTurn(GRAND_LIVE_RUN, 100), 24);
+  assert.equal(baseGainsSwitchTurn(GRAND_LIVE_RUN, 50), 48);
+  const fast = calculateCareerProjection(card, { facilityPace: 100 });
+  const slow = calculateCareerProjection(card, { facilityPace: 25 });
+  assert.equal(fast.baseGainsSwitchTurn, 24);
+  assert.equal(slow.baseGainsSwitchTurn, GRAND_LIVE_RUN.trainingTurns);
+  assert.ok(fast.score > slow.score);
+});
+
+test("career projection reports where its bond timing came from", () => {
+  const measured = calculateCareerProjection(card);
+  const estimated = calculateCareerProjection({ ...card, event_stats: null });
+  const none = calculateCareerProjection({
+    ...card,
+    rarity: 1,
+    event_stats: null,
+  });
+  assert.equal(measured.eventSource, "upstream event data");
+  assert.equal(measured.eventBond, 10);
+  assert.equal(estimated.eventSource, "rarity fallback");
+  assert.equal(estimated.eventBond, 5);
+  assert.equal(none.eventSource, "no event estimate");
+  assert.equal(none.eventBond, 0);
+  assert.equal(measured.startingBond, 35);
+});
+
+test("stat weights change every ranking they feed", () => {
+  const speedOnly = { statWeights: [1, 0, 0, 0, 0] };
+  const full = calculateCardEV(card, {});
+  const weighted = calculateCardEV(card, speedOnly);
+  assert.ok(weighted.specialtyScore < full.specialtyScore);
+  assert.ok(
+    Math.abs(
+      weighted.specialtyScore -
+        (full.specialtyVector[0] + full.specialtyVector[5] * 1.2),
+    ) < 1e-12,
+  );
+  const run = calculateCareerProjection(card, speedOnly);
+  const unweighted = calculateCareerProjection(card, {});
+  assert.ok(run.score < unweighted.score);
+});
+
+test("friend and group supports are scored on every room they appear on", () => {
+  const tazuna = {
+    ...card,
+    id: 10021,
+    type: 6,
+    group: false,
+    specialty_rate: 0,
+    unique_specialty: 1,
+    fs_specialty: 1,
+    offstat_appearance_denominator: 5,
+  };
+  const ev = calculateCardEV(tazuna, {});
+  assert.equal(ev.hasSpecialty, false);
+  assert.equal(ev.specialtyScore, 0);
+  assert.ok(ev.allPlacementScore > 0);
+  assert.equal(typeLabel(tazuna), "Friend");
+  assert.equal(typeLabel({ ...tazuna, group: true }), "Group");
+  assert.equal(typeLabel(card), "Speed");
+
+  const run = calculateCareerProjection(tazuna, {});
+  assert.equal(run.hasSpecialty, false);
+  assert.equal(run.rainbowClicks, 0);
+  assert.ok(run.offClicks > 0);
+  assert.ok(run.score > 0);
+  assert.ok(
+    uniqueModelWarnings(tazuna).some((warning) => warning.includes("friend")),
+  );
 });
 
 test("career projection adds guaranteed initial stats to the run total", () => {
