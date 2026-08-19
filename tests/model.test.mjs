@@ -1,11 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  calculateAppearance,
   calculateCardEV,
+  calculateMarginalTraining,
   portraitImageUrl,
   remoteSupportImageUrl,
   specialUniqueUnlocked,
   supportImageUrl,
+  trainingValue,
   uniqueModelWarnings,
 } from "../app.mjs";
 import { bondSourceLabel, calculateCareerProjection } from "../career.mjs";
@@ -170,6 +173,93 @@ test("bond source label names the estimate behind the timing", () => {
   );
 });
 
+test("a scenario multiplier lifts the whole click, not just the card's share", () => {
+  const gains = [11, 0, 5, 0, 0, 2];
+  const options = { gains, motivation: 0.2, rainbow: true, facilityLevel: 5 };
+  const plain = calculateMarginalTraining(card, 0, options);
+  const scaled = calculateMarginalTraining(card, 0, {
+    ...options,
+    scenarioMultiplier: 1.4,
+  });
+  const withCard = trainingValue([{ card, rainbow: true }], {
+    ...options,
+    trainingType: 0,
+  });
+  const withoutCard = trainingValue([], { ...options, trainingType: 0 });
+
+  // Grand Live's rainbow bonus multiplies the training the click produces, and
+  // the click only earns it because this card rainbows there — so the uplift on
+  // the base gains counts too, and the baseline never gets it.
+  assert.ok(Math.abs(scaled[0] - (withCard[0] * 1.4 - withoutCard[0])) < 1e-9);
+  assert.ok(scaled[0] > plain[0] * 1.4, "the base gains are lifted as well");
+});
+
+test("a bonded group card spreads its friendship bonus over every room", () => {
+  const groupCard = {
+    ...card,
+    type: 6,
+    group: true,
+    specialty_rate: 0,
+    unique_specialty: 1,
+    fs_specialty: 1,
+    fs_bonus: 1.25,
+    unique_fs_bonus: 1.1,
+    offstat_appearance_denominator: 5,
+  };
+  const gains = [11, 0, 5, 0, 0, 2];
+  const shared = { gains, trainingType: 0, motivation: 0.2, facilityLevel: 5 };
+  const unbonded = trainingValue([{ card: groupCard, rainbow: false, bond: 40 }], shared);
+  const bonded = trainingValue([{ card: groupCard, rainbow: false, bond: 100 }], shared);
+  assert.ok(bonded[0] > unbonded[0]);
+  // Upstream's convention: one fifth of the card's combined friendship bonus.
+  assert.ok(Math.abs(bonded[0] / unbonded[0] - 1.27) < 1e-9);
+
+  // A friend card that is not a group card gets nothing extra from bond.
+  const friendCard = { ...groupCard, group: false };
+  assert.equal(
+    trainingValue([{ card: friendCard, rainbow: false, bond: 100 }], shared)[0],
+    trainingValue([{ card: friendCard, rainbow: false, bond: 40 }], shared)[0],
+  );
+});
+
+test("a card with no specialty room is not given the scenario's priority bonus", () => {
+  const friendCard = {
+    ...card,
+    type: 6,
+    specialty_rate: 0,
+    unique_specialty: 1,
+    fs_specialty: 1,
+    offstat_appearance_denominator: 5,
+  };
+  const appearance = calculateAppearance(friendCard, 20, { bond: 100 });
+  // Five rooms plus "no training" must still account for the whole turn.
+  const total = appearance.eachOff * 5 + appearance.none;
+  assert.ok(Math.abs(total - 1) < 1e-12);
+  assert.equal(
+    appearance.specialtyWeight,
+    calculateAppearance(friendCard, 0, { bond: 100 }).specialtyWeight,
+  );
+});
+
+test("concentrated off-type appearances raise a card's per-room chance", () => {
+  const spread = deckCard(1, 6, {
+    type: 6,
+    specialty_rate: 0,
+    unique_specialty: 1,
+    fs_specialty: 1,
+    offstat_appearance_denominator: 5,
+  });
+  const concentrated = { ...spread, id: 2, offstat_appearance_denominator: 2.5 };
+  const spreadRun = calculateDeckProjection([spread], { withMarginals: false });
+  const concentratedRun = calculateDeckProjection([concentrated], {
+    withMarginals: false,
+  });
+  assert.ok(
+    concentratedRun.members[0].selectionTurns >
+      spreadRun.members[0].selectionTurns,
+  );
+});
+
 const deckCard = (id, type, overrides = {}) => ({
   ...card,
   id,
@@ -185,7 +275,6 @@ test("deck projection prices each support by what the deck loses without it", ()
   const projection = calculateDeckProjection(deck, { globalSpecialty: 20 });
 
   assert.equal(projection.members.length, 4);
-  assert.equal(projection.deckTypes, 4);
   assert.ok(projection.score > 0);
   for (const member of projection.members) {
     assert.ok(member.marginalScore > 0);
@@ -253,23 +342,39 @@ test("a support is worth less inside a deck than it looks alone", () => {
   assert.ok(pair.supportScore < soloContribution * 2);
 });
 
-test("deck projection handles a single card and skips its marginal", () => {
+test("a single card is priced against the trainee training alone", () => {
   const single = calculateDeckProjection([deckCard(1, 0)], {
     globalSpecialty: 20,
   });
   assert.equal(single.members.length, 1);
-  assert.equal(single.members[0].marginalScore, undefined);
-  assert.ok(single.score > 0);
   assert.ok(single.members[0].finalBond >= 80);
+  assert.ok(single.score > 0);
+  // The only card's marginal is the whole of what the supports contribute.
+  assert.ok(
+    Math.abs(single.members[0].marginalScore - single.supportScore) < 1e-9,
+  );
 });
 
 test("deck projection caps at a real deck and counts its own type spread", () => {
   const seven = [0, 1, 2, 3, 4, 0, 1].map((type, index) =>
     deckCard(index + 1, type),
   );
-  const projection = calculateDeckProjection(seven, { withMarginals: false });
-  assert.equal(projection.members.length, 6);
-  assert.equal(projection.deckTypes, 5);
+  const full = calculateDeckProjection(seven, { withMarginals: false });
+  assert.equal(full.members.length, 6);
+  assert.equal(full.deckTypes, 5, "a full deck speaks for itself");
+
+  // A half-built deck tops up with the spread the user expects the empty slots
+  // to have, so diversity uniques do not switch off mid-comparison.
+  const partial = calculateDeckProjection(
+    [deckCard(1, 0), deckCard(2, 0)],
+    { withMarginals: false, deckTypes: 5 },
+  );
+  assert.equal(partial.deckTypes, 5);
+  const narrow = calculateDeckProjection(
+    [deckCard(1, 0), deckCard(2, 0)],
+    { withMarginals: false, deckTypes: 1 },
+  );
+  assert.equal(narrow.deckTypes, 1);
 });
 
 test("deck projection weights a complete probability space", () => {

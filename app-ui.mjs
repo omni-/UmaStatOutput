@@ -6,15 +6,13 @@ import {
   calculateCardEV,
   clampFacilityLevel,
   hasFacilityLevelUnique,
-  portraitImageUrl,
-  remoteSupportImageUrl,
-  supportImageUrl,
   turnsPerFacilityLevel,
   typeLabel,
   uniqueModelWarnings,
 } from "./app.mjs";
 import { loadCards } from "./data.mjs";
 import {
+  DEFAULT_SETTING_VALUES,
   applySettingValues,
   collectSettingValues,
   emitSettingsChanged,
@@ -25,6 +23,7 @@ import {
   MAX_SELECTED_CARDS,
   buildGroups,
   cardFor,
+  cardImageMarkup,
   findGroup,
   formatNumber as fmt,
   formatPercent as pct,
@@ -52,11 +51,11 @@ function rarityMarkup(card) {
 function futureMarkup(card) {
   return card.future ? '<span class="future-chip">FUTURE</span>' : "";
 }
-function thumbMarkup(card, extraClass = "") {
-  return `<div class="accent-card-thumb${extraClass}"><img class="card-thumb" src="${htmlEscape(supportImageUrl(card.id))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${htmlEscape(remoteSupportImageUrl(card.id))}'" /></div>`;
+function thumbMarkup(card, small = false) {
+  return cardImageMarkup(card, { small });
 }
 function portraitMarkup(card, small = false) {
-  return `<div class="accent-card-thumb portrait-card-thumb${small ? " small" : ""}"><img class="card-thumb portrait-thumb" src="${htmlEscape(portraitImageUrl(card))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${htmlEscape(remoteSupportImageUrl(card.id))}'" /></div>`;
+  return cardImageMarkup(card, { portrait: true, small });
 }
 
 function readStoredState() {
@@ -102,6 +101,10 @@ function initBrowser() {
   const state = { payload: null, groups: [], selected: [], activeDetailId: null };
   const shared = decodeShareState(location.hash);
   const stored = shared || readStoredState();
+  // A share link seeds this visit and is then spent: leaving it in the address
+  // bar would make every later edit vanish on the next reload.
+  if (shared)
+    history.replaceState(null, "", location.pathname + location.search);
 
   els.includeFuture.checked = Boolean(stored?.includeFuture);
   els.search.placeholder = "Search title, character, or support ID…";
@@ -316,7 +319,7 @@ function initBrowser() {
         const { card, ev, flags } = row;
         const best = (metric) =>
           index === 0 && metric === bestMetric ? " best" : "";
-        return `<tr data-detail-id="${card.id}" class="${state.activeDetailId === card.id ? "active" : ""}" data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="result-support" data-card-type="${card.type}">${thumbMarkup(card, " small")}<div>${titleMarkup(card, "result-titleline")}<div class="name-row"><div class="result-name">${htmlEscape(card.char_name)}${flags.length ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>' : ""}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="result-sub">${htmlEscape(typeLabel(card))} · ${lbLabel(card.limit_break)} · #${card.id}</div></div></div></td><td><div class="metric-main">${fmt(card.specialty_rate, 0)}</div><div class="metric-sub">得意率</div></td><td><div class="metric-main">${pct(ev.appearance.specialty)}</div><div class="metric-sub">preferred training appearance</div></td><td><div class="metric-main">+${fmt(ev.rainbowScore)}</div><div class="metric-sub">extra weighted stats</div></td><td class="${best("specialtyScore").trim()}"><div class="metric-main">${fmt(ev.specialtyScore)}</div><div class="metric-sub">weighted stats / turn</div></td><td class="${best("allPlacementScore").trim()}"><div class="metric-main">${fmt(ev.allPlacementScore)}</div><div class="metric-sub">every room it appears on</div></td></tr>`;
+        return `<tr data-detail-id="${card.id}" class="${state.activeDetailId === card.id ? "active" : ""}" data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="result-support" data-card-type="${card.type}">${thumbMarkup(card, true)}<div>${titleMarkup(card, "result-titleline")}<div class="name-row"><div class="result-name">${htmlEscape(card.char_name)}${flags.length ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>' : ""}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="result-sub">${htmlEscape(typeLabel(card))} · ${lbLabel(card.limit_break)} · #${card.id}</div></div></div></td><td><div class="metric-main">${fmt(card.specialty_rate, 0)}</div><div class="metric-sub">得意率</div></td><td><div class="metric-main">${pct(ev.appearance.specialty)}</div><div class="metric-sub">preferred training appearance</div></td><td><div class="metric-main">+${fmt(ev.rainbowScore)}</div><div class="metric-sub">extra weighted stats</div></td><td class="${best("specialtyScore").trim()}"><div class="metric-main">${fmt(ev.specialtyScore)}</div><div class="metric-sub">weighted stats / turn</div></td><td class="${best("allPlacementScore").trim()}"><div class="metric-main">${fmt(ev.allPlacementScore)}</div><div class="metric-sub">every room it appears on</div></td></tr>`;
       })
       .join("");
     renderDetails(rows.find((row) => row.card.id === state.activeDetailId) || rows[0]);
@@ -327,12 +330,16 @@ function initBrowser() {
     renderResults();
   }
 
-  /** Persist, publish the new settings to the other views, and re-render. */
-  function commit({ rerenderCards = true } = {}) {
+  /**
+   * Persist and re-render. Card selection reaches the other views through their
+   * observer on the selected-cards container, so only an actual settings change
+   * broadcasts — otherwise every add and remove would render them twice.
+   */
+  function commit({ settingsChanged = false } = {}) {
     persistState();
-    if (rerenderCards) renderAll();
-    else renderResults();
-    emitSettingsChanged(document);
+    if (settingsChanged) renderResults();
+    else renderAll();
+    if (settingsChanged) emitSettingsChanged(document);
   }
 
   els.search.addEventListener("input", renderSearch);
@@ -364,7 +371,7 @@ function initBrowser() {
   });
 
   function onSettingsChanged() {
-    commit({ rerenderCards: false });
+    commit({ settingsChanged: true });
   }
   els.trainingProfile.addEventListener("input", () => {
     applyProfileDefaults(els.trainingProfile.value);
@@ -396,18 +403,10 @@ function initBrowser() {
   );
 
   els.resetSettings.addEventListener("click", () => {
-    els.trainingProfile.value = "gl-late";
-    applyProfileDefaults("gl-late");
-    els.motivation.value = "0.2";
-    els.rankMetric.value = "specialty";
-    document.querySelectorAll("[data-growth-index]").forEach((el) => {
-      el.value = 0;
-    });
-    document.querySelectorAll("[data-stat-weight-index]").forEach((el) => {
-      el.value = 1;
-    });
-    const includeInitial = document.querySelector("#include-initial-stats");
-    if (includeInitial) includeInitial.checked = true;
+    applySettingValues(document, DEFAULT_SETTING_VALUES);
+    // The profile's own Specialty Priority, SP value, and facility settings
+    // come from the preset rather than from the defaults map.
+    applyProfileDefaults(els.trainingProfile.value);
     onSettingsChanged();
   });
   els.resetCards.addEventListener("click", () => {
@@ -417,18 +416,30 @@ function initBrowser() {
   });
 
   els.shareButton?.addEventListener("click", async () => {
-    const hash = encodeShareState(persistState());
-    location.hash = hash;
-    const url = `${location.origin}${location.pathname}#${hash}`;
+    const setStatus = (message) => {
+      if (!els.shareStatus) return;
+      els.shareStatus.textContent = message;
+      setTimeout(() => {
+        els.shareStatus.textContent = "";
+      }, 4000);
+    };
+    let url;
+    try {
+      url = `${location.origin}${location.pathname}${location.search}#${encodeShareState(persistState())}`;
+    } catch (error) {
+      console.error("Share link could not be built", error);
+      setStatus("Link failed");
+      return;
+    }
     try {
       await navigator.clipboard.writeText(url);
-      els.shareStatus.textContent = "Link copied";
+      setStatus("Link copied");
     } catch {
-      els.shareStatus.textContent = "Link is in the address bar";
+      // Clipboard access can be refused; the address bar is the fallback, and
+      // the hash is consumed and cleared on the next load either way.
+      location.hash = url.slice(url.indexOf("#") + 1);
+      setStatus("Link is in the address bar");
     }
-    setTimeout(() => {
-      els.shareStatus.textContent = "";
-    }, 4000);
   });
 
   loadCards()

@@ -7,3 +7,5 @@
 .panel,.results-panel,.cards-panel,.controls-panel{min-width:0}
 .table-wrap{max-width:100%}
 .source-pill{white-space:normal;max-width:100%}
+.deck-table{min-width:520px}
+.deck-totals .stat-vector{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}

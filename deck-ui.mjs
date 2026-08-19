@@ -1,21 +1,19 @@
-import {
-  STAT_NAMES,
-  hasTrainingSpecialty,
-  remoteSupportImageUrl,
-  supportImageUrl,
-  typeLabel,
-} from "./app.mjs";
+import { STAT_NAMES, hasTrainingSpecialty, typeLabel } from "./app.mjs";
 import { MAX_DECK_SIZE, calculateDeckProjection } from "./deck.mjs";
 import { loadCards } from "./data.mjs";
 import { SETTINGS_EVENT, readSharedSettings } from "./settings.mjs";
-import { formatNumber as fmt, htmlEscape, lbLabel } from "./view-model.mjs";
-
-// The deck model enumerates every placement of the deck across five rooms, so
-// renders are debounced rather than run on every keystroke.
-const RENDER_DELAY_MS = 120;
+import {
+  RENDER_DELAY_MS,
+  cardImageMarkup,
+  formatNumber as fmt,
+  htmlEscape,
+  lbLabel,
+  readSelectedCards,
+  revealResultsPanel,
+} from "./view-model.mjs";
 
 function thumb(card) {
-  return `<div class="accent-card-thumb small"><img class="card-thumb" src="${htmlEscape(supportImageUrl(card.id))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${htmlEscape(remoteSupportImageUrl(card.id))}'" /></div>`;
+  return cardImageMarkup(card, { small: true });
 }
 
 function initDeckView() {
@@ -24,27 +22,12 @@ function initDeckView() {
   const totals = document.querySelector("#deck-totals");
   const note = document.querySelector("#deck-note");
   const selectedRoot = document.querySelector("#selected-cards");
-  if (!body || !wrap || !totals || !selectedRoot) return;
+  if (!body || !wrap || !totals || !note || !selectedRoot) return;
   let payload = null;
   let timer = null;
 
-  function selectedCards() {
-    if (!payload) return [];
-    const byIdLb = new Map(
-      payload.cards.map((card) => [`${card.id}:${card.limit_break}`, card]),
-    );
-    const cards = [];
-    selectedRoot.querySelectorAll("select[data-lb-id]").forEach((select) => {
-      const card = byIdLb.get(
-        `${Number(select.dataset.lbId)}:${Number(select.value)}`,
-      );
-      if (card) cards.push(card);
-    });
-    return cards;
-  }
-
   function render() {
-    const selected = selectedCards();
+    const selected = readSelectedCards(payload, selectedRoot);
     if (selected.length < 2) {
       wrap.hidden = true;
       body.innerHTML = "";
@@ -103,6 +86,7 @@ function initDeckView() {
     })
     .catch((error) => {
       console.error("Deck projection data failed to load", error);
+      revealResultsPanel();
       wrap.hidden = false;
       body.innerHTML = `<tr><td colspan="3" class="career-error">Deck projection data failed to load.</td></tr>`;
     });

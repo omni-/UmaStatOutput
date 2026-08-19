@@ -16,11 +16,17 @@ import {
   hasFacilityLevelUnique,
   turnsPerFacilityLevel,
   uniqueModelWarnings,
-  RARITY_NAMES,
   TRAINING_PROFILES,
-  portraitImageUrl,
-  remoteSupportImageUrl,
 } from "./app.mjs";
+import {
+  RENDER_DELAY_MS,
+  cardImageMarkup,
+  htmlEscape as esc,
+  lbLabel,
+  rarityLabel as rarity,
+  readSelectedCards,
+  revealResultsPanel,
+} from "./view-model.mjs";
 import { averageFriendshipTrainingsForCareer } from "./unique-model.mjs";
 import { loadCards } from "./data.mjs";
 import { SETTINGS_EVENT, readSharedSettings } from "./settings.mjs";
@@ -211,13 +217,13 @@ export function calculateCareerProjection(card, options = {}) {
         motivation,
         growth,
         rainbow: rainbowing && onSpecialty,
+        scenarioMultiplier:
+          rainbowing && onSpecialty ? run.scenarioMultiplier : 1,
         bond,
         friendshipTrainings,
         facilityLevel: facilityLevelAtTurn(midpoint, facilityPace),
       });
-      const scenarioScale =
-        rainbowing && onSpecialty ? run.scenarioMultiplier : 1;
-      addScaled(trainingVector, marginal, probability * duration * scenarioScale);
+      addScaled(trainingVector, marginal, probability * duration);
     }
 
     if (specialty) specialtyClicks += midAppearance.specialty * duration;
@@ -295,27 +301,13 @@ export function calculateCareerProjection(card, options = {}) {
   };
 }
 
-function esc(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-function lbLabel(lb) {
-  return Number(lb) === 4 ? "MLB" : `LB${lb}`;
-}
-function rarity(card) {
-  return RARITY_NAMES[card.rarity] || `R${card.rarity}`;
-}
 function title(card) {
   return card.title
     ? `<div class="career-titleline">[${esc(card.title)}]</div>`
     : "";
 }
 function portrait(card) {
-  return `<div class="accent-card-thumb small portrait-card-thumb"><img class="card-thumb portrait-thumb" src="${esc(portraitImageUrl(card))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${esc(remoteSupportImageUrl(card.id))}'" /></div>`;
+  return cardImageMarkup(card, { portrait: true, small: true });
 }
 
 function formatInitialStat(value) {
@@ -324,13 +316,12 @@ function formatInitialStat(value) {
 
 /** Human-readable description of where a card's bond timing came from. */
 export function bondSourceLabel(career) {
+  const start = `bond ${career.startingBond.toFixed(0)} start`;
+  if (career.eventSource === "no event estimate")
+    return `${start} · no support event on record`;
   const eventLabel =
-    career.eventSource === "upstream event data"
-      ? "event bond"
-      : career.eventSource === "rarity fallback"
-        ? "estimated event bond"
-        : "no event bond";
-  return `bond ${career.startingBond.toFixed(0)} start + ${career.eventBond.toFixed(0)} ${eventLabel}`;
+    career.eventSource === "rarity fallback" ? "estimated event bond" : "event bond";
+  return `${start} + ${career.eventBond.toFixed(0)} ${eventLabel}`;
 }
 
 function initCareerView() {
@@ -340,23 +331,8 @@ function initCareerView() {
   if (!body || !wrap || !selectedRoot) return;
   let payload = null;
 
-  function selectedCards() {
-    if (!payload) return [];
-    const byIdLb = new Map(
-      payload.cards.map((card) => [`${card.id}:${card.limit_break}`, card]),
-    );
-    const cards = [];
-    selectedRoot.querySelectorAll("select[data-lb-id]").forEach((select) => {
-      const card = byIdLb.get(
-        `${Number(select.dataset.lbId)}:${Number(select.value)}`,
-      );
-      if (card) cards.push(card);
-    });
-    return cards;
-  }
-
   function render() {
-    const cards = selectedCards();
+    const cards = readSelectedCards(payload, selectedRoot);
     if (!cards.length) {
       wrap.hidden = true;
       body.innerHTML = "";
@@ -403,20 +379,29 @@ function initCareerView() {
     wrap.hidden = false;
   }
 
+  // Each render integrates a whole run per selected card, and one interaction
+  // can fire the observer and a listener together, so renders coalesce.
+  let timer = null;
+  function queueRender() {
+    clearTimeout(timer);
+    timer = setTimeout(render, RENDER_DELAY_MS);
+  }
+
   loadCards()
     .then((data) => {
       payload = data;
       render();
-      new MutationObserver(render).observe(selectedRoot, {
+      new MutationObserver(queueRender).observe(selectedRoot, {
         childList: true,
         subtree: true,
         attributes: true,
       });
-      selectedRoot.addEventListener("change", render);
-      document.addEventListener(SETTINGS_EVENT, render);
+      selectedRoot.addEventListener("change", queueRender);
+      document.addEventListener(SETTINGS_EVENT, queueRender);
     })
     .catch((error) => {
       console.error("Career projection data failed to load", error);
+      revealResultsPanel();
       wrap.hidden = false;
       body.innerHTML = `<tr><td colspan="9" class="career-error">Career projection data failed to load.</td></tr>`;
     });

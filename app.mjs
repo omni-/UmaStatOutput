@@ -74,6 +74,7 @@ export const TRAINING_PROFILES = {
   },
 };
 
+export const TRAINING_COUNT = 5;
 const BASE_SPECIALTY_WEIGHT = 100;
 const OFF_TRAINING_WEIGHT = 100;
 const NO_TRAINING_WEIGHT = 50;
@@ -165,13 +166,16 @@ export function calculateAppearance(card, globalSpecialty = 0, options = {}) {
     bond >= RAINBOW_BOND_THRESHOLD
       ? Number(card.fs_specialty || 1) - unique.flattenedSpecialtyFactorDelta
       : 1;
+  // A card with no training specialty has no preferred room, so a scenario's
+  // global Specialty Priority has nothing to apply to.
+  const specialty = hasTrainingSpecialty(card);
   const specialtyWeight =
     (BASE_SPECIALTY_WEIGHT +
-      Number(card.specialty_rate || 0) +
-      Number(globalSpecialty || 0) +
-      unique.conditionalSpecialtyRate) *
+      (specialty ? Number(card.specialty_rate || 0) : 0) +
+      (specialty ? Number(globalSpecialty || 0) : 0)) *
     (Number(card.unique_specialty || 1) - unique.lockedSpecialtyFactorDelta) *
-    friendshipSpecialty;
+    friendshipSpecialty *
+    (1 + unique.conditionalSpecialtyFactor);
   const denominator =
     specialtyWeight + OFF_TRAINING_WEIGHT * 4 + NO_TRAINING_WEIGHT;
   return {
@@ -239,7 +243,17 @@ export function trainingValue(entries, options = {}) {
       statBonus[stat] +=
         Number(card.stat_bonus?.[stat] || 0) +
         Number(unique.conditionalStatBonus[stat] || 0);
-    if (!rainbow) continue;
+    if (!rainbow) {
+      // A group card never rainbows, but once bonded its friendship bonus is
+      // spread thinly across every training it joins.
+      const bond = entry.bond ?? options.bond ?? GLOBAL_UNIQUE_CONTEXT.bond;
+      if (card.group && Number(bond) >= RAINBOW_BOND_THRESHOLD)
+        friendshipBonus *=
+          1 +
+          (Number(card.fs_bonus || 1) + Number(card.unique_fs_bonus || 1) - 1) /
+            TRAINING_COUNT;
+      continue;
+    }
     trainingBonus += Number(card.fs_training || 0) + unique.rainbowTrainingDelta;
     motivationBonus +=
       Number(card.fs_motivation || 0) + unique.rainbowMotivationDelta;
@@ -283,12 +297,18 @@ export function calculateMarginalTraining(card, trainingType, options = {}) {
     gains: options.gains || TRAINING_PROFILES["gl-late"].gains[trainingType],
     extraSupports: supports - 1,
   };
+  // A scenario multiplier scales the whole click, and the click only earns it
+  // because this card is rainbowing on it — so it applies to the side with the
+  // card, including the base gains it lifts, and never to the baseline.
+  const scenarioMultiplier = Number(options.scenarioMultiplier ?? 1);
   const withCard = trainingValue(
     [{ card, rainbow: Boolean(options.rainbow) }],
     shared,
   );
   const withoutCard = trainingValue([], shared);
-  return withCard.map((value, stat) => value - withoutCard[stat]);
+  return withCard.map(
+    (value, stat) => value * scenarioMultiplier - withoutCard[stat],
+  );
 }
 
 export function normalizeStatWeights(statWeights) {

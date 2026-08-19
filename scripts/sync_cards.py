@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch and normalize Euophrys Global cards plus JP-only future supports."""
 from __future__ import annotations
-import argparse,json,re,sys,time,urllib.parse,urllib.request
+import argparse,json,os,re,sys,time,urllib.parse,urllib.request
 from datetime import datetime,timezone
 from pathlib import Path
 DEFAULT_URL="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/main/src/cards/gl.js"
@@ -17,6 +17,12 @@ PLAYABLE_TYPES=(0,1,2,3,4,6)
 IMAGE_URL_TEMPLATE="https://raw.githubusercontent.com/Euophrys/umamusume-tierlist/main/public/cardImages/support_card_s_{card_id}.png"
 # Where the page looks for the art that --images copies into the artifact.
 IMAGE_WEB_PREFIX="./img/"
+SUPPORT_IMAGE_NAME="support_card_s_{card_id}.png"
+PORTRAIT_NAME="portrait_{card_id}"
+# A run against a throttling or unreachable host should give up on images
+# rather than spend hours timing out one file at a time; the page falls back to
+# the upstream host for anything missing.
+CONSECUTIVE_IMAGE_FAILURE_LIMIT=20
 EVENT_RE=re.compile(r"^\s*(\d+):\s*(\[[^\]\n]+\])",re.MULTILINE)
 def _jsonify_js_object_literal(text:str):
     out=[];i=0;in_string=False;escaped=False
@@ -100,9 +106,22 @@ def game_id_from_row(row):
 def fetch_text(url:str):
     request=urllib.request.Request(url,headers={"User-Agent":"UmaStatOutput/1.6 (+https://github.com/omni-/UmaStatOutput)"})
     with urllib.request.urlopen(request,timeout=30) as response:return response.read().decode("utf-8")
-def fetch_bytes(url:str):
+def fetch_bytes(url:str,timeout:int=15):
     request=urllib.request.Request(url,headers={"User-Agent":"UmaStatOutput/1.6 (+https://github.com/omni-/UmaStatOutput)"})
-    with urllib.request.urlopen(request,timeout=30) as response:return response.read()
+    with urllib.request.urlopen(request,timeout=timeout) as response:return response.read()
+def fetch_with_retries(fetch,attempts:int=3,delay:float=2.0):
+    """Retries a fetch a couple of times so one slow response does not decide
+    whether a deploy happens."""
+    for attempt in range(attempts):
+        try:return fetch()
+        except Exception:
+            if attempt==attempts-1:raise
+            time.sleep(delay*(attempt+1))
+def write_file_atomically(target:Path,data:bytes):
+    """Writes through a temporary name so a cancelled job cannot leave a
+    truncated file behind for the next run to treat as already downloaded."""
+    temporary=target.with_name(f"{target.name}.part")
+    temporary.write_bytes(data);os.replace(temporary,target)
 def fetch_json(url:str):return json.loads(fetch_text(url))
 def extract_metadata_from_file(source:str):
     payload=json.loads(source)
@@ -196,16 +215,19 @@ def download_images(card_ids,directory:Path,template:str=IMAGE_URL_TEMPLATE):
 
     A missing or unreachable image is not fatal: the page falls back to the
     upstream URL for any file that is not there."""
-    directory.mkdir(parents=True,exist_ok=True);saved=skipped=failed=0
+    directory.mkdir(parents=True,exist_ok=True);saved=skipped=failed=0;consecutive=0
     for card_id in sorted(card_ids):
-        target=directory/f"support_card_s_{card_id}.png"
+        target=directory/SUPPORT_IMAGE_NAME.format(card_id=card_id)
         if target.exists() and target.stat().st_size>0:skipped+=1;continue
+        if consecutive>=CONSECUTIVE_IMAGE_FAILURE_LIMIT:
+            failed+=1;continue
         try:
             data=fetch_bytes(template.format(card_id=card_id))
             if not data:raise ValueError("empty response")
-            target.write_bytes(data);saved+=1
+            write_file_atomically(target,data);saved+=1;consecutive=0
         except Exception as exc:
-            failed+=1;print(f"WARN: card image {card_id} unavailable: {exc}",file=sys.stderr)
+            failed+=1;consecutive+=1;print(f"WARN: card image {card_id} unavailable: {exc}",file=sys.stderr)
+            if consecutive==CONSECUTIVE_IMAGE_FAILURE_LIMIT:print(f"WARN: {consecutive} card images failed in a row; skipping the rest and falling back to the upstream host for them",file=sys.stderr)
     return {"saved":saved,"skipped":skipped,"failed":failed}
 def portrait_extension(url:str):
     suffix=Path(urllib.parse.urlparse(url).path).suffix.lower()
@@ -215,20 +237,30 @@ def download_portraits(cards,directory:Path):
     to point at the local copy, so the published page hotlinks nothing.
 
     Rows whose portrait could not be downloaded keep their upstream URL."""
-    directory.mkdir(parents=True,exist_ok=True);saved={};failed=set();skipped=0
+    directory.mkdir(parents=True,exist_ok=True);saved={};failed=set();skipped=0;consecutive=0
     remote={}
     for card in cards:
         url=str(card.get("portrait_url") or "")
         if url.startswith("http"):remote.setdefault(int(card["id"]),url)
     for card_id,url in sorted(remote.items()):
-        name=f"portrait_{card_id}{portrait_extension(url)}";target=directory/name
+        name=PORTRAIT_NAME.format(card_id=card_id)+portrait_extension(url);target=directory/name
         if target.exists() and target.stat().st_size>0:saved[card_id]=name;skipped+=1;continue
+        if consecutive>=CONSECUTIVE_IMAGE_FAILURE_LIMIT:
+            failed.add(card_id);continue
         try:
             data=fetch_bytes(url)
             if not data:raise ValueError("empty response")
-            target.write_bytes(data);saved[card_id]=name
+            write_file_atomically(target,data);saved[card_id]=name;consecutive=0
         except Exception as exc:
-            failed.add(card_id);print(f"WARN: portrait {card_id} unavailable: {exc}",file=sys.stderr)
+            failed.add(card_id);consecutive+=1;print(f"WARN: portrait {card_id} unavailable: {exc}",file=sys.stderr)
+            if consecutive==CONSECUTIVE_IMAGE_FAILURE_LIMIT:print(f"WARN: {consecutive} portraits failed in a row; skipping the rest",file=sys.stderr)
+    # A run whose portrait metadata degraded still has the files a previous run
+    # cached, so adopt those rather than shipping a portrait-less page.
+    for card in cards:
+        card_id=int(card["id"])
+        if card_id in saved:continue
+        existing=next((path for path in sorted(directory.glob(f"{PORTRAIT_NAME.format(card_id=card_id)}.*")) if path.suffix!=".part" and path.stat().st_size>0),None)
+        if existing:saved[card_id]=existing.name;skipped+=1
     for card in cards:
         name=saved.get(int(card["id"]))
         if name:card["portrait_url"]=f"{IMAGE_WEB_PREFIX}{name}"
@@ -272,11 +304,11 @@ def main():
     else:
         titles,names,portraits=fetch_umapyoi_metadata(args.titles_url,target_ids)
     try:
-        unique_payload=json.loads(args.uniques_input.read_text(encoding="utf-8")) if args.uniques_input else fetch_json(args.uniques_url)
+        unique_payload=json.loads(args.uniques_input.read_text(encoding="utf-8")) if args.uniques_input else fetch_with_retries(lambda:fetch_json(args.uniques_url))
         uniques=extract_unique_metadata(unique_payload)
     except Exception as exc:
         print(f"WARN: raw unique metadata unavailable; affected supports will be marked: {exc}",file=sys.stderr);uniques={}
-    cards=normalize_tagged(tagged,events,titles,portraits,names=names,uniques=uniques);global_count=len({c["id"] for c in cards if not c["future"]});future_count=len({c["id"] for c in cards if c["future"]});titled=len({c["id"] for c in cards if c["title"]});portrait_count=len({c["id"] for c in cards if c["portrait_url"]});unique_count=len({c["id"] for c in cards if c["special_uniques"] is not None})
+    cards=normalize_tagged(tagged,events,titles,portraits,names=names,uniques=uniques);global_count=len({c["id"] for c in cards if not c["future"]});future_count=len({c["id"] for c in cards if c["future"]});titled=len({c["id"] for c in cards if c["title"]});portrait_count=len({c["id"] for c in cards if c["portrait_url"]});unique_count=len({c["id"] for c in cards if c["special_uniques"]})
     check_unique_coverage(unique_count,args.min_unique_rows,args.allow_degraded_uniques)
     image_report=download_images({c["id"] for c in cards},args.images) if args.images else None
     portrait_report=download_portraits(cards,args.images) if args.images else None

@@ -335,12 +335,12 @@ test("type 101 resolves every supported ordinary bonus family", () => {
 
   assert.equal(before.trainingDelta, 0);
   assert.equal(before.motivationDelta, 0);
-  assert.equal(before.conditionalSpecialtyRate, 0);
+  assert.equal(before.conditionalSpecialtyFactor, 0);
   assert.deepEqual(before.conditionalStatBonus, [0, 0, 0, 0, 0, 0]);
   assert.ok(Math.abs(after.trainingDelta - 0.15) < 1e-12);
   assert.ok(Math.abs(after.motivationDelta - 0.2) < 1e-12);
   assert.ok(Math.abs(after.friendshipDelta) < 1e-12);
-  assert.equal(after.conditionalSpecialtyRate, 30);
+  assert.ok(Math.abs(after.conditionalSpecialtyFactor - 0.3) < 1e-12);
   assert.deepEqual(after.conditionalStatBonus, [2, 2, 2, 2, 2, 0]);
 
   const rawOnly = { ...allFamilies, fs_specialty: 1 };
@@ -351,6 +351,13 @@ test("type 101 resolves every supported ordinary bonus family", () => {
   assert.deepEqual(flattenedBefore, rawBefore);
   assert.deepEqual(flattenedAfter, rawAfter);
   assert.ok(flattenedAfter.specialty > flattenedBefore.specialty);
+
+  // Specialty Priority from a unique is a multiplier on the whole weight, not
+  // extra weight points added to the base: a 30 here means ×1.3.
+  assert.ok(
+    Math.abs(flattenedAfter.specialtyWeight - flattenedBefore.specialtyWeight * 1.3) <
+      1e-9,
+  );
 });
 
 test("Mr CB type 101 grants post-bond SP on off-specialty career placements", () => {

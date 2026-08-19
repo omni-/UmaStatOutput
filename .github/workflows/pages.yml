@@ -22,6 +22,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      # The suite runs on the runner image's Node otherwise, which drifts.
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
       - name: Test calculator math and views
         run: npm test
 
@@ -42,12 +48,18 @@ jobs:
 
       # Card art and portraits rarely change, and the sync skips any file that
       # is already there, so a restored cache keeps the daily run from
-      # re-downloading every image.
+      # re-downloading every image. The key rotates weekly: inside a week the
+      # key hits and nothing is written back, so a ~80 MB cache is saved once a
+      # week rather than on every push.
+      - name: Card art cache key
+        id: art-cache-key
+        run: echo "week=$(date -u +%Y-%V)" >> "$GITHUB_OUTPUT"
+
       - name: Restore card art
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: _site/img
-          key: card-art-${{ github.run_id }}
+          key: card-art-${{ steps.art-cache-key.outputs.week }}
           restore-keys: card-art-
 
       - name: Build static site and sync Global support data

@@ -82,6 +82,18 @@ class SyncCardsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"refusing to publish a degraded dataset"):sync_cards.check_unique_coverage(3,100)
         sync_cards.check_unique_coverage(100,100)
         sync_cards.check_unique_coverage(3,100,allow_degraded=True)
+    def test_a_listed_but_empty_unique_does_not_count_as_coverage(self):
+        """A payload that lists every support with no effects is the degraded
+        case the guard exists for, so it must not read as full coverage."""
+        payload={"supportData":[{"support_id":card_id,"unique":None} for card_id in range(1,201)]}
+        uniques=sync_cards.extract_unique_metadata(payload)
+        required={"type":0,"rarity":3,"limit_break":4,"specialty_rate":80,"char_name":"Synthetic"}
+        rows=sync_cards.normalize_tagged([({"id":card_id,**required},False) for card_id in range(1,201)],{}, {},{},minimum_rows=1,uniques=uniques)
+        self.assertEqual(len(uniques),200)
+        # Present in the payload, but carrying nothing: not coverage.
+        self.assertEqual(len({r["id"] for r in rows if r["special_uniques"] is not None}),200)
+        self.assertEqual(len({r["id"] for r in rows if r["special_uniques"]}),0)
+        with self.assertRaisesRegex(ValueError,"refusing to publish"):sync_cards.check_unique_coverage(len({r["id"] for r in rows if r["special_uniques"]}),100)
     def test_card_art_is_downloaded_once_and_survives_missing_files(self):
         with tempfile.TemporaryDirectory() as directory:
             target=Path(directory)/"img"
@@ -108,6 +120,47 @@ class SyncCardsTests(unittest.TestCase):
             self.assertEqual(cards[1]["portrait_url"],"https://example.test/b.webp")
             self.assertEqual(cards[2]["portrait_url"],"")
             self.assertTrue((target/"portrait_1001.png").exists())
+    def test_cached_portraits_are_still_pointed_at_locally(self):
+        """The production path on CI: every file is already in the restored
+        cache, so nothing is downloaded and the rows must still be rewritten."""
+        cards=[{"id":1001,"portrait_url":"https://example.test/a.png"},{"id":1002,"portrait_url":""}]
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/"img";target.mkdir()
+            (target/"portrait_1001.png").write_bytes(b"cached");(target/"portrait_1002.png").write_bytes(b"cached")
+            def fail(url):raise AssertionError(f"should not download {url}")
+            with patch.object(sync_cards,"fetch_bytes",side_effect=fail):
+                report=sync_cards.download_portraits(cards,target)
+            self.assertEqual((report["saved"],report["skipped"],report["failed"]),(0,2,0))
+            self.assertEqual(cards[0]["portrait_url"],"./img/portrait_1001.png")
+            # Metadata degraded for 1002, but the cached file is still usable.
+            self.assertEqual(cards[1]["portrait_url"],"./img/portrait_1002.png")
+    def test_a_truncated_image_is_not_left_behind(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/"img";target.mkdir()
+            def boom(url):raise OSError("connection reset")
+            with patch.object(sync_cards,"fetch_bytes",side_effect=boom):
+                sync_cards.download_images({1001},target)
+            self.assertEqual(list(target.iterdir()),[])
+    def test_image_downloads_stop_after_a_run_of_failures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            attempts=[]
+            def boom(url):attempts.append(url);raise OSError("throttled")
+            with patch.object(sync_cards,"fetch_bytes",side_effect=boom):
+                report=sync_cards.download_images(set(range(1,201)),Path(directory)/"img")
+            self.assertEqual(len(attempts),sync_cards.CONSECUTIVE_IMAGE_FAILURE_LIMIT)
+            self.assertEqual(report["failed"],200)
+    def test_a_transient_fetch_failure_is_retried(self):
+        calls=[]
+        def flaky():
+            calls.append(1)
+            if len(calls)<3:raise OSError("timeout")
+            return "ok"
+        with patch.object(sync_cards.time,"sleep",lambda seconds:None):
+            self.assertEqual(sync_cards.fetch_with_retries(flaky),"ok")
+        self.assertEqual(len(calls),3)
+        def always_fails():raise OSError("down")
+        with patch.object(sync_cards.time,"sleep",lambda seconds:None):
+            with self.assertRaises(OSError):sync_cards.fetch_with_retries(always_fails)
     def test_portrait_extension_follows_the_source_url(self):
         self.assertEqual(sync_cards.portrait_extension("https://example.test/a.webp?x=1"),".webp")
         self.assertEqual(sync_cards.portrait_extension("https://example.test/a"),".png")

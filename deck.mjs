@@ -15,6 +15,7 @@ import {
   weightedSum,
 } from "./app.mjs";
 import { DEFAULT_PASSIVE_BOND_PER_TURN } from "./app.mjs";
+import { rampTrainingCap } from "./unique-model.mjs";
 import { RUN_PROFILES, baseGainsSwitchTurn } from "./career.mjs";
 
 export const MAX_DECK_SIZE = 6;
@@ -25,6 +26,7 @@ const BOND_PER_SELECTED_TRAINING = 5;
 // changes (a card bonds, facilities level, base gains switch) and at least this
 // often, so slow-moving context like fan count cannot drift far inside a slice.
 const MAX_SEGMENT_TURNS = 8;
+const RAMP_SEGMENT_TURNS = 2;
 
 function eventBond(card) {
   if (Array.isArray(card.event_stats) && card.event_stats.length >= 8)
@@ -153,13 +155,27 @@ export function calculateDeckProjection(cards, options = {}) {
     Number(options.passiveBondPerTurn ?? DEFAULT_PASSIVE_BOND_PER_TURN),
   );
   const switchTurn = baseGainsSwitchTurn(run, facilityPace);
-  const deckTypes = deck.length ? deckTypeCount(deck) : Number(options.deckTypes ?? 5);
+  // A full deck speaks for itself; a partly filled one is topped up with the
+  // spread the user says the empty slots will have, so diversity uniques do not
+  // switch off just because the comparison is half built.
+  const deckTypes = Math.max(
+    deckTypeCount(deck),
+    deck.length >= MAX_DECK_SIZE ? 0 : Number(options.deckTypes ?? 5),
+  );
+  // Ramping uniques are the one thing that moves continuously inside a slice,
+  // so a deck holding one is integrated more finely.
+  const segmentTurns = deck.some((card) => rampTrainingCap(card) > 0)
+    ? RAMP_SEGMENT_TURNS
+    : MAX_SEGMENT_TURNS;
 
   const bonds = deck.map((card) =>
     Math.min(100, effectiveStartingBond(card) + eventBond(card)),
   );
+  // Bond timing is reported for every support, including friend and group
+  // cards, whose own bonuses switch on at the same threshold even though they
+  // never rainbow.
   const bondedAt = deck.map((card, index) =>
-    bonds[index] >= RAINBOW_BOND_THRESHOLD && hasTrainingSpecialty(card) ? 0 : null,
+    bonds[index] >= RAINBOW_BOND_THRESHOLD ? 0 : null,
   );
   const trainingVector = new Array(6).fill(0);
   const selectionTurns = new Array(deck.length).fill(0);
@@ -199,9 +215,25 @@ export function calculateDeckProjection(cards, options = {}) {
       });
       const bond = bonds[index];
       const friendshipTrainings = rainbowTurns[index];
+      // A card whose off-type appearances are concentrated into fewer rooms
+      // shows up in each of them more often. Upstream expresses that as a
+      // denominator over allocated days; here it scales the room's own chance,
+      // renormalized so the card still lands in at most one room per turn.
+      const defaultDenominator = hasTrainingSpecialty(card) ? 4 : 5;
+      const concentration =
+        defaultDenominator /
+        Math.max(0.5, Number(card.offstat_appearance_denominator || defaultDenominator));
       const roomChance = new Array(TRAINING_COUNT)
         .fill(0)
-        .map((_, room) => roomProbability(card, appearance, room));
+        .map((_, room) =>
+          hasTrainingSpecialty(card) && Number(card.type) === room
+            ? roomProbability(card, appearance, room)
+            : roomProbability(card, appearance, room) * concentration,
+        );
+      const total = roomChance.reduce((sum, chance) => sum + chance, 0);
+      if (total > 1)
+        for (let room = 0; room < TRAINING_COUNT; room++)
+          roomChance[room] /= total;
       return {
         appearance,
         bond,
@@ -225,7 +257,7 @@ export function calculateDeckProjection(cards, options = {}) {
     );
     let duration = Math.min(
       run.trainingTurns - turn,
-      MAX_SEGMENT_TURNS,
+      segmentTurns,
       nextFacilityTurn - turn,
       nextGainsTurn - turn,
     );
@@ -247,11 +279,7 @@ export function calculateDeckProjection(cards, options = {}) {
     }
     turn += duration;
     for (let index = 0; index < deck.length; index++)
-      if (
-        bondedAt[index] === null &&
-        bonds[index] >= RAINBOW_BOND_THRESHOLD &&
-        hasTrainingSpecialty(deck[index])
-      )
+      if (bondedAt[index] === null && bonds[index] >= RAINBOW_BOND_THRESHOLD)
         bondedAt[index] = turn;
   }
 
@@ -281,12 +309,17 @@ export function calculateDeckProjection(cards, options = {}) {
         })
       : null;
 
-  if (options.withMarginals !== false && deck.length > 1) {
+  if (options.withMarginals !== false && deck.length > 0) {
     for (let index = 0; index < deck.length; index++) {
-      const without = calculateDeckProjection(
-        deck.filter((_, other) => other !== index),
-        { ...options, withMarginals: false },
-      );
+      // Leaving out the only card is the empty-deck baseline, which is already
+      // computed above.
+      const without =
+        deck.length === 1
+          ? baseline
+          : calculateDeckProjection(
+              deck.filter((_, other) => other !== index),
+              { ...options, withMarginals: false },
+            );
       members[index].marginalScore = score - without.score;
       members[index].marginalVector = vector.map(
         (value, stat) => value - without.vector[stat],

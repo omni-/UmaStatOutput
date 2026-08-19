@@ -168,13 +168,12 @@ function type101Modifiers(card, bond) {
         flattened.training += value / 100;
         if (destination) destination.training += value / 100;
       } else if (bonusType === 19) {
-        // The two sides intentionally use different units. `flattened` is
-        // compared against `fs_specialty - 1`, a multiplier delta, so the raw
-        // percentage is scaled down. `active` flows into
-        // `conditionalSpecialtyRate`, which is summed with the raw specialty
-        // rate points in `calculateAppearance`, so it stays unscaled.
+        // Specialty Priority arrives as a percentage multiplier, not as weight
+        // points: the data pairs `type 19 value 20` with `unique_specialty 1.2`
+        // and this bond-gated `40` with `fs_specialty 1.4`. Both sides are
+        // multiplier deltas, so both are scaled the same way.
         flattened.specialty += value / 100;
-        if (destination) destination.specialty += value;
+        if (destination) destination.specialty += value / 100;
       }
     }
   }
@@ -488,7 +487,7 @@ export function resolveUniqueModifiers(card, trainingType, options = {}) {
       (value, stat) => value + locked.stats[stat],
     ),
     rainbowStatBonusDelta: type101.baked.stats.map((value) => -value),
-    conditionalSpecialtyRate: type101.active.specialty,
+    conditionalSpecialtyFactor: type101.active.specialty,
     flattenedSpecialtyFactorDelta: type101.baked.specialty,
     lockedSpecialtyFactorDelta: locked.specialtyFactor,
     context: uniqueContext,

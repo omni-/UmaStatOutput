@@ -48,16 +48,48 @@ export function collectSettingValues(root) {
   return result;
 }
 
+/**
+ * Writes stored or shared values back into the controls. A value a control
+ * cannot represent — an option from another build, a hand-edited link — is
+ * dropped rather than left blanking the control while the model quietly uses
+ * its default.
+ */
 export function applySettingValues(root, values) {
   if (!values || typeof values !== "object") return;
   for (const id of ALL_SETTING_IDS) {
     if (!(id in values)) continue;
     const element = root?.querySelector?.(`#${id}`);
     if (!element) continue;
-    if (element.type === "checkbox") element.checked = Boolean(values[id]);
-    else element.value = String(values[id]);
+    if (element.type === "checkbox") {
+      element.checked = Boolean(values[id]);
+      continue;
+    }
+    const previous = element.value;
+    element.value = String(values[id]);
+    if (element.value !== String(values[id])) element.value = previous;
   }
 }
+
+/**
+ * What Reset restores. Everything the environment panel exposes belongs here,
+ * so a new control cannot quietly become un-resettable.
+ */
+export const DEFAULT_SETTING_VALUES = {
+  "training-profile": "gl-late",
+  motivation: "0.2",
+  "rank-metric": "specialty",
+  "supports-on-training": "1",
+  "deck-types": String(GLOBAL_UNIQUE_CONTEXT.deckTypes),
+  fans: String(GLOBAL_UNIQUE_CONTEXT.fans),
+  "max-energy": String(GLOBAL_UNIQUE_CONTEXT.maxEnergy),
+  "current-energy": String(GLOBAL_UNIQUE_CONTEXT.currentEnergy),
+  "passive-bond": String(DEFAULT_PASSIVE_BOND_PER_TURN),
+  "include-initial-stats": true,
+  ...Object.fromEntries([0, 1, 2, 3, 4].map((index) => [`growth-${index}`, "0"])),
+  ...Object.fromEntries(
+    [0, 1, 2, 3, 4].map((index) => [`stat-weight-${index}`, "1"]),
+  ),
+};
 
 function value(root, id, fallback) {
   const element = root?.querySelector?.(`#${id}`);
