@@ -64,6 +64,19 @@ test("every element id the modules query actually exists", () => {
   assert.ok(ids.has("growth-4") && ids.has("stat-weight-4"));
 });
 
+// Importing every module link-checks it: a typo'd import name or a symbol that
+// no longer exists is a load-time error, and the page loads these directly with
+// no bundler in front of them to catch it.
+test("every module the page loads links cleanly", async () => {
+  const names = moduleSources.map(({ name }) => name);
+  assert.ok(names.includes("app-ui.mjs") && names.includes("deck-ui.mjs"));
+  for (const name of names)
+    await assert.doesNotReject(
+      () => import(`../${name}`),
+      `${name} failed to load`,
+    );
+});
+
 // An unbalanced tag closes a section early and silently drops everything after
 // it, which no id check would notice.
 test("the page's container tags are balanced", () => {
