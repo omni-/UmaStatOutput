@@ -351,7 +351,7 @@ function title(card) {
     : "";
 }
 function portrait(card) {
-  return cardImageMarkup(card, { portrait: true, small: true });
+  return cardImageMarkup(card, { small: true });
 }
 
 function formatOneTimeStat(value) {
@@ -441,12 +441,12 @@ function initCareerView() {
             ? `+${formatOneTimeStat(career.eventScore)} event · `
             : "";
         const bondMeta = career.hasSpecialty
-          ? `bond phase ≈ ${career.daysToBond.toFixed(1)} turns · rainbows ≈ ${career.rainbowClicks.toFixed(1)}`
-          : "no specialty training · never rainbows";
+          ? `bond ≈ T${career.daysToBond.toFixed(1)} · rainbows ${career.rainbowClicks.toFixed(1)}`
+          : "no specialty training";
         const warnMark = flags.length
           ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>'
           : "";
-        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${career.runLabel} · ${bondMeta}${facilityMeta}${esc(eventBreakdown(career))}</div><div class="career-card-meta career-bond-source">${esc(bondSourceLabel(career))} · final bond ${career.finalBond.toFixed(0)}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}${eventMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
+        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${career.runLabel} · ${bondMeta}${facilityMeta}${esc(eventBreakdown(career))} · ${esc(bondSourceLabel(career))} · final bond ${career.finalBond.toFixed(0)}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}${eventMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
       })
       .join("");
     wrap.hidden = false;

@@ -155,10 +155,9 @@ test("card art is served locally with the upstream host as the fallback", () => 
   assert.equal(supportImageUrl(30028), "./img/support_card_s_30028.png");
   assert.ok(remoteSupportImageUrl(30028).startsWith("https://"));
   assert.notEqual(supportImageUrl(30028), remoteSupportImageUrl(30028));
-  assert.equal(portraitImageUrl({ id: 30028 }), "./img/support_card_s_30028.png");
   assert.equal(
     portraitImageUrl({ id: 30028, portrait_url: "https://example.test/a.png" }),
-    "https://example.test/a.png",
+    "./img/support_card_s_30028.png",
   );
 });
 

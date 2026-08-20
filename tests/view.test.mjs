@@ -121,20 +121,15 @@ test("card art markup points at the local copy and falls back upstream", () => {
   assert.match(local, /onerror="this\.onerror=null;this\.src='https:\/\/[^']+30028\.png'"/);
   assert.ok(local.includes('loading="lazy"'));
 
-  const portrait = cardImageMarkup(
+  // The portrait option is retired: support-card art is used everywhere, even
+  // when a card carries a portrait_url.
+  const cardWithPortrait = cardImageMarkup(
     { id: 30028, portrait_url: "./img/portrait_30028.png" },
     { portrait: true, small: true },
   );
-  assert.ok(portrait.includes('src="./img/portrait_30028.png"'));
-  assert.ok(portrait.includes("portrait-card-thumb") && portrait.includes("small"));
-  assert.match(portrait, /this\.src='https:\/\//);
-
-  // A hostile portrait path cannot break out of the attribute.
-  const hostile = cardImageMarkup(
-    { id: 1, portrait_url: '"><script>alert(1)</script>' },
-    { portrait: true },
-  );
-  assert.ok(!hostile.includes("<script>"));
+  assert.ok(cardWithPortrait.includes('src="./img/support_card_s_30028.png"'));
+  assert.ok(cardWithPortrait.includes("small"));
+  assert.match(cardWithPortrait, /this\.src='https:\/\//);
 
   for (const { name, source } of moduleSources.filter(({ name }) =>
     ["app-ui.mjs", "career.mjs", "deck-ui.mjs"].includes(name),
@@ -155,23 +150,15 @@ test("the sync's image paths are the paths the page requests", () => {
 
   const prefix = constant("IMAGE_WEB_PREFIX");
   const supportName = constant("SUPPORT_IMAGE_NAME");
-  const portraitName = constant("PORTRAIT_NAME");
-  assert.ok(prefix && supportName && portraitName, "sync constants not found");
+  assert.ok(prefix && supportName, "sync constants not found");
 
   const cardId = 30028;
   const expectedSupport = prefix + supportName.replace("{card_id}", cardId);
   assert.equal(supportImageUrl(cardId), expectedSupport);
   assert.equal(
-    portraitImageUrl({ id: cardId }),
+    portraitImageUrl({ id: cardId, portrait_url: prefix + "portrait_x.png" }),
     expectedSupport,
-    "a card with no portrait falls back to its card art",
-  );
-  assert.equal(
-    portraitImageUrl({
-      id: cardId,
-      portrait_url: prefix + portraitName.replace("{card_id}", cardId) + ".png",
-    }),
-    `${prefix}portrait_${cardId}.png`,
+    "portrait_url is ignored; support card art is used everywhere",
   );
 });
 

@@ -54,9 +54,6 @@ function futureMarkup(card) {
 function thumbMarkup(card, small = false) {
   return cardImageMarkup(card, { small });
 }
-function portraitMarkup(card, small = false) {
-  return cardImageMarkup(card, { portrait: true, small });
-}
 
 function readStoredState() {
   try {
@@ -247,7 +244,7 @@ function initBrowser() {
               `<option value="${lb}" ${lb === selection.lb ? "selected" : ""}>${lbLabel(lb)}</option>`,
           )
           .join("");
-        return `<div class="selected-card" data-card-type="${card.type}">${portraitMarkup(card)}<div style="min-width:0">${titleMarkup(card)}<div class="name-row"><div class="selected-title" title="${htmlEscape(card.char_name)}">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="selected-meta"><span class="type-tag">${htmlEscape(typeLabel(card))}</span><select data-lb-id="${card.id}">${lbOptions}</select></div></div><button class="remove-card" data-remove-id="${card.id}" type="button" title="Remove">×</button></div>`;
+        return `<div class="selected-card" data-card-type="${card.type}">${thumbMarkup(card)}<div style="min-width:0">${titleMarkup(card)}<div class="name-row"><div class="selected-title" title="${htmlEscape(card.char_name)}">${htmlEscape(card.char_name)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="selected-meta"><span class="type-tag">${htmlEscape(typeLabel(card))}</span><select data-lb-id="${card.id}">${lbOptions}</select></div></div><button class="remove-card" data-remove-id="${card.id}" type="button" title="Remove">×</button></div>`;
       })
       .join("");
   }

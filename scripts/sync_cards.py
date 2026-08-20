@@ -18,7 +18,6 @@ IMAGE_URL_TEMPLATE="https://raw.githubusercontent.com/Euophrys/umamusume-tierlis
 # Where the page looks for the art that --images copies into the artifact.
 IMAGE_WEB_PREFIX="./img/"
 SUPPORT_IMAGE_NAME="support_card_s_{card_id}.png"
-PORTRAIT_NAME="portrait_{card_id}"
 # A run against a throttling or unreachable host should give up on images
 # rather than spend hours timing out one file at a time; the page falls back to
 # the upstream host for anything missing.
@@ -229,42 +228,6 @@ def download_images(card_ids,directory:Path,template:str=IMAGE_URL_TEMPLATE):
             failed+=1;consecutive+=1;print(f"WARN: card image {card_id} unavailable: {exc}",file=sys.stderr)
             if consecutive==CONSECUTIVE_IMAGE_FAILURE_LIMIT:print(f"WARN: {consecutive} card images failed in a row; skipping the rest and falling back to the upstream host for them",file=sys.stderr)
     return {"saved":saved,"skipped":skipped,"failed":failed}
-def portrait_extension(url:str):
-    suffix=Path(urllib.parse.urlparse(url).path).suffix.lower()
-    return suffix if suffix in (".png",".jpg",".jpeg",".webp",".gif") else ".png"
-def download_portraits(cards,directory:Path):
-    """Copies character portraits alongside the card art and rewrites each row
-    to point at the local copy, so the published page hotlinks nothing.
-
-    Rows whose portrait could not be downloaded keep their upstream URL."""
-    directory.mkdir(parents=True,exist_ok=True);saved={};failed=set();skipped=0;consecutive=0
-    remote={}
-    for card in cards:
-        url=str(card.get("portrait_url") or "")
-        if url.startswith("http"):remote.setdefault(int(card["id"]),url)
-    for card_id,url in sorted(remote.items()):
-        name=PORTRAIT_NAME.format(card_id=card_id)+portrait_extension(url);target=directory/name
-        if target.exists() and target.stat().st_size>0:saved[card_id]=name;skipped+=1;continue
-        if consecutive>=CONSECUTIVE_IMAGE_FAILURE_LIMIT:
-            failed.add(card_id);continue
-        try:
-            data=fetch_bytes(url)
-            if not data:raise ValueError("empty response")
-            write_file_atomically(target,data);saved[card_id]=name;consecutive=0
-        except Exception as exc:
-            failed.add(card_id);consecutive+=1;print(f"WARN: portrait {card_id} unavailable: {exc}",file=sys.stderr)
-            if consecutive==CONSECUTIVE_IMAGE_FAILURE_LIMIT:print(f"WARN: {consecutive} portraits failed in a row; skipping the rest",file=sys.stderr)
-    # A run whose portrait metadata degraded still has the files a previous run
-    # cached, so adopt those rather than shipping a portrait-less page.
-    for card in cards:
-        card_id=int(card["id"])
-        if card_id in saved:continue
-        existing=next((path for path in sorted(directory.glob(f"{PORTRAIT_NAME.format(card_id=card_id)}.*")) if path.suffix!=".part" and path.stat().st_size>0),None)
-        if existing:saved[card_id]=existing.name;skipped+=1
-    for card in cards:
-        name=saved.get(int(card["id"]))
-        if name:card["portrait_url"]=f"{IMAGE_WEB_PREFIX}{name}"
-    return {"saved":len(saved)-skipped,"skipped":skipped,"failed":len(failed)}
 def merge_global_and_future(global_cards,jp_cards):
     global_ids={int(c["id"]) for c in playable(global_cards)}
     merged=[(c,False) for c in playable(global_cards)]
@@ -308,14 +271,12 @@ def main():
         uniques=extract_unique_metadata(unique_payload)
     except Exception as exc:
         print(f"WARN: raw unique metadata unavailable; affected supports will be marked: {exc}",file=sys.stderr);uniques={}
-    cards=normalize_tagged(tagged,events,titles,portraits,names=names,uniques=uniques);global_count=len({c["id"] for c in cards if not c["future"]});future_count=len({c["id"] for c in cards if c["future"]});titled=len({c["id"] for c in cards if c["title"]});portrait_count=len({c["id"] for c in cards if c["portrait_url"]});unique_count=len({c["id"] for c in cards if c["special_uniques"]})
+    cards=normalize_tagged(tagged,events,titles,portraits,names=names,uniques=uniques);global_count=len({c["id"] for c in cards if not c["future"]});future_count=len({c["id"] for c in cards if c["future"]});titled=len({c["id"] for c in cards if c["title"]});unique_count=len({c["id"] for c in cards if c["special_uniques"]})
     check_unique_coverage(unique_count,args.min_unique_rows,args.allow_degraded_uniques)
     image_report=download_images({c["id"] for c in cards},args.images) if args.images else None
-    portrait_report=download_portraits(cards,args.images) if args.images else None
-    payload={"sources":{"cards":args.url,"future_cards":args.jp_url,"events":args.events_url,"metadata":args.titles_url,"unique_metadata":args.uniques_url},"generated_at":datetime.now(timezone.utc).isoformat(),"card_count":global_count,"future_card_count":future_count,"row_count":len(cards),"event_count":len(events),"title_count":titled,"portrait_count":portrait_count,"unique_metadata_count":unique_count,"cards":cards}
+    payload={"sources":{"cards":args.url,"future_cards":args.jp_url,"events":args.events_url,"metadata":args.titles_url,"unique_metadata":args.uniques_url},"generated_at":datetime.now(timezone.utc).isoformat(),"card_count":global_count,"future_card_count":future_count,"row_count":len(cards),"event_count":len(events),"title_count":titled,"unique_metadata_count":unique_count,"cards":cards}
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(payload,ensure_ascii=False,separators=(",",":")),encoding="utf-8")
-    print(f"Wrote {len(cards)} card/LB rows ({global_count} Global supports; {future_count} future JP supports; {len(events)} event rows; {titled} titles; {portrait_count} portraits; {unique_count} raw unique records) to {args.output}")
+    print(f"Wrote {len(cards)} card/LB rows ({global_count} Global supports; {future_count} future JP supports; {len(events)} event rows; {titled} titles; {unique_count} raw unique records) to {args.output}")
     if image_report:print(f"Card art: {image_report['saved']} downloaded, {image_report['skipped']} already present, {image_report['failed']} unavailable in {args.images}")
-    if portrait_report:print(f"Portraits: {portrait_report['saved']} downloaded, {portrait_report['skipped']} already present, {portrait_report['failed']} unavailable in {args.images}")
     return 0
 if __name__=="__main__":sys.exit(main())

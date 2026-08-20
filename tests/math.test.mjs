@@ -11,7 +11,6 @@ import {
   facilityLevelAtTurn,
   facilityTrainingBonus,
   GLOBAL_UNIQUE_CONTEXT,
-  portraitImageUrl,
   remoteSupportImageUrl,
   specialUniqueUnlocked,
   supportImageUrl,

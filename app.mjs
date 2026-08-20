@@ -403,7 +403,7 @@ export function supportImageUrl(id) {
 }
 
 export function portraitImageUrl(card) {
-  return card?.portrait_url ? String(card.portrait_url) : supportImageUrl(card.id);
+  return supportImageUrl(card.id);
 }
 
 if (typeof document !== "undefined") import("./app-ui.mjs");

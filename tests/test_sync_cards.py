@@ -10,7 +10,7 @@ sync_cards=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(sync_ca
 class SyncCardsTests(unittest.TestCase):
     def test_fixture_pipeline_parses_and_normalizes_upstream_shapes(self):
         cards=sync_cards.extract_json_array((FIXTURES/"cards.js").read_text(encoding="utf-8"));events=sync_cards.extract_events((FIXTURES/"events.js").read_text(encoding="utf-8"),minimum_rows=2);titles,portraits=sync_cards.extract_metadata_from_file((FIXTURES/"metadata.json").read_text(encoding="utf-8"));result=sync_cards.normalize(cards,events,titles,portraits,minimum_rows=2)
-        self.assertEqual([(r["id"],r["limit_break"]) for r in result],[(1001,0),(1002,4),(1003,4)]);self.assertEqual(result[0]["title"],"Fixture Title");self.assertEqual(result[0]["portrait_url"],"https://example.test/1001.png");self.assertEqual(result[0]["event_stats"],[1,2,3,4,5,6,7,8]);self.assertEqual(result[0]["starting_stats"],[10,0,5,0,0]);self.assertEqual(result[1]["starting_stats"],[0,0,0,0,0]);self.assertFalse(result[0]["future"]);self.assertIsNone(result[0]["special_uniques"])
+        self.assertEqual([(r["id"],r["limit_break"]) for r in result],[(1001,0),(1002,4),(1003,4)]);self.assertEqual(result[0]["title"],"Fixture Title");self.assertEqual(result[0]["event_stats"],[1,2,3,4,5,6,7,8]);self.assertEqual(result[0]["starting_stats"],[10,0,5,0,0]);self.assertEqual(result[1]["starting_stats"],[0,0,0,0,0]);self.assertFalse(result[0]["future"]);self.assertIsNone(result[0]["special_uniques"])
     def test_future_merge_keeps_only_jp_only_ids(self):
         global_cards=[{"id":1001,"type":0,"limit_break":0},{"id":1002,"type":4,"limit_break":0}];jp_cards=[{"id":1001,"type":0,"limit_break":0},{"id":2001,"type":2,"limit_break":0},{"id":2001,"type":2,"limit_break":4}]
         tagged=sync_cards.merge_global_and_future(global_cards,jp_cards)
@@ -106,34 +106,6 @@ class SyncCardsTests(unittest.TestCase):
                 self.assertEqual((target/"support_card_s_1001.png").read_bytes(),b"png-bytes")
                 again=sync_cards.download_images({1001},target)
                 self.assertEqual((again["saved"],again["skipped"]),(0,1))
-    def test_portraits_are_localized_and_missing_ones_keep_their_url(self):
-        cards=[{"id":1001,"portrait_url":"https://example.test/a.png"},{"id":1002,"portrait_url":"https://example.test/b.webp"},{"id":1003,"portrait_url":""}]
-        with tempfile.TemporaryDirectory() as directory:
-            target=Path(directory)/"img"
-            def fake_fetch(url):
-                if url.endswith("b.webp"):raise OSError("not found")
-                return b"image-bytes"
-            with patch.object(sync_cards,"fetch_bytes",side_effect=fake_fetch):
-                report=sync_cards.download_portraits(cards,target)
-            self.assertEqual((report["saved"],report["failed"]),(1,1))
-            self.assertEqual(cards[0]["portrait_url"],"./img/portrait_1001.png")
-            self.assertEqual(cards[1]["portrait_url"],"https://example.test/b.webp")
-            self.assertEqual(cards[2]["portrait_url"],"")
-            self.assertTrue((target/"portrait_1001.png").exists())
-    def test_cached_portraits_are_still_pointed_at_locally(self):
-        """The production path on CI: every file is already in the restored
-        cache, so nothing is downloaded and the rows must still be rewritten."""
-        cards=[{"id":1001,"portrait_url":"https://example.test/a.png"},{"id":1002,"portrait_url":""}]
-        with tempfile.TemporaryDirectory() as directory:
-            target=Path(directory)/"img";target.mkdir()
-            (target/"portrait_1001.png").write_bytes(b"cached");(target/"portrait_1002.png").write_bytes(b"cached")
-            def fail(url):raise AssertionError(f"should not download {url}")
-            with patch.object(sync_cards,"fetch_bytes",side_effect=fail):
-                report=sync_cards.download_portraits(cards,target)
-            self.assertEqual((report["saved"],report["skipped"],report["failed"]),(0,2,0))
-            self.assertEqual(cards[0]["portrait_url"],"./img/portrait_1001.png")
-            # Metadata degraded for 1002, but the cached file is still usable.
-            self.assertEqual(cards[1]["portrait_url"],"./img/portrait_1002.png")
     def test_a_truncated_image_is_not_left_behind(self):
         with tempfile.TemporaryDirectory() as directory:
             target=Path(directory)/"img";target.mkdir()
@@ -161,7 +133,4 @@ class SyncCardsTests(unittest.TestCase):
         def always_fails():raise OSError("down")
         with patch.object(sync_cards.time,"sleep",lambda seconds:None):
             with self.assertRaises(OSError):sync_cards.fetch_with_retries(always_fails)
-    def test_portrait_extension_follows_the_source_url(self):
-        self.assertEqual(sync_cards.portrait_extension("https://example.test/a.webp?x=1"),".webp")
-        self.assertEqual(sync_cards.portrait_extension("https://example.test/a"),".png")
 if __name__=="__main__":unittest.main()
