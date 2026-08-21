@@ -17,6 +17,8 @@ import {
   trainingValue,
   turnsPerFacilityLevel,
   typeLabel,
+  MODEL_CONFIDENCE,
+  modelConfidenceMark,
   uniqueModelWarnings,
 } from "../app.mjs";
 import {
@@ -243,7 +245,10 @@ test("Mr CB type 101 stat/SP unique is fully modeled without a card-id exception
       { type: 101, value: 80, value_1: 7, value_2: 1, value_3: 30, value_4: 1 },
     ],
   };
-  assert.deepEqual(uniqueModelWarnings(mrCb, "gl-late"), []);
+  const notes = uniqueModelWarnings(mrCb, "gl-late");
+  assert.deepEqual(notes.formulaNotes, []);
+  assert.deepEqual(notes.scopeNotes, []);
+  assert.equal(notes.severity, MODEL_CONFIDENCE.MODELLED);
 });
 
 test("type 101 SP bonus activates at its bond threshold on every placement", () => {
@@ -440,7 +445,11 @@ test("type 112 is disclosed by mechanic rather than support id", () => {
     id: 777777,
     special_uniques: [{ type: 112, value: 20 }],
   };
-  assert.match(uniqueModelWarnings(festaLike, "gl-late")[0], /failure-protection/);
+  const notes = uniqueModelWarnings(festaLike, "gl-late");
+  assert.match(notes.scopeNotes[0], /failure-protection/);
+  // Outside the metric is not a defect in the number, so it never marks.
+  assert.deepEqual(notes.formulaNotes, []);
+  assert.equal(modelConfidenceMark(festaLike, notes), null);
 });
 
 test("race bonus uniques are silently excluded from the training model", () => {
@@ -452,7 +461,9 @@ test("race bonus uniques are silently excluded from the training model", () => {
       { type: 15, value: 5 },
     ],
   };
-  assert.deepEqual(uniqueModelWarnings(raceBonus, "gl-late"), []);
+  const notes = uniqueModelWarnings(raceBonus, "gl-late");
+  assert.deepEqual(notes.formulaNotes, []);
+  assert.deepEqual(notes.scopeNotes, []);
 });
 
 test("unknown unique types retain scenario coverage warning", () => {
@@ -462,10 +473,13 @@ test("unknown unique types retain scenario coverage warning", () => {
     future: true,
     special_uniques: [{ type: 120, value: 1 }],
   };
+  const notes = uniqueModelWarnings(future, "gl-late");
   assert.match(
-    uniqueModelWarnings(future, "gl-late")[0],
+    notes.formulaNotes[0],
     /not certified for Grand Concert \/ 1.5 Anniversary/,
   );
+  // An effect outside the modeled vocabulary is the part that defines the card.
+  assert.equal(notes.severity, MODEL_CONFIDENCE.MISSING);
 });
 
 test("type 108 max-energy scaling is mechanic-driven and removes upstream bake", () => {
@@ -774,7 +788,9 @@ test("friend and group supports are scored on every room they appear on", () => 
   assert.ok(run.offClicks > 0);
   assert.ok(run.score > 0);
   assert.ok(
-    uniqueModelWarnings(tazuna).some((warning) => warning.includes("friend")),
+    uniqueModelWarnings(tazuna).scopeNotes.some((note) =>
+      note.includes("friend"),
+    ),
   );
 });
 

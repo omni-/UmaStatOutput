@@ -21,27 +21,89 @@ const SUPPORTED_SPECIAL_TYPES = new Set([
   101, 102, 103, 104, 106, 107, 108, 109, 110, 111,
 ]);
 
+// Raw types whose value Euophrys already carries in a flattened card field, so
+// reading the raw effect again would double count. Types 9-13 land in
+// `starting_stats` and type 14 in `sb`, both of which the run and deck
+// projections score.
 const FLATTENED_TRAINING_TYPES = new Set([
-  1, 2, 3, 4, 5, 6, 7, 8, 14, 19, 30, 32,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 19, 30, 32,
 ]);
 
 const SILENTLY_IGNORED_TYPES = new Set([15]);
 
+// Effect types that never reach the training-output formula. These describe
+// what the metric does not cover rather than a defect in the number, so they
+// are reported as scope notes and never raise the model-confidence flag.
+//
+// Types 9-13 are deliberately absent: Euophrys flattens unique-granted initial
+// stats into `starting_stats`, which the run and deck projections already
+// score, so there is nothing missing to disclose.
 const OUTSIDE_METRIC_TYPES = new Map([
-  [9, "initial Speed from the unique is outside the training-output metric"],
-  [10, "initial Stamina from the unique is outside the training-output metric"],
-  [11, "initial Power from the unique is outside the training-output metric"],
-  [12, "initial Guts from the unique is outside the training-output metric"],
-  [13, "initial Wit from the unique is outside the training-output metric"],
   [18, "hint-rate value from the unique is outside the training-output metric"],
   [25, "energy-gain value from the unique is outside the current action-economy model"],
-  [26, "event-effect-size value from the unique is outside the training-output metric"],
+  [
+    26,
+    "event-effect-size value from the unique is outside the per-click metric; the run projection scores it through the card's event-effect size",
+  ],
   [27, "failure-rate value from the unique is outside the current risk model"],
   [28, "energy-cost value from the unique is outside the current action-economy model"],
   [31, "Wit energy-recovery value from the unique is outside the current action-economy model"],
   [105, "deck-composition initial stats are outside the training-output metric"],
   [112, "failure-protection value is outside the current training-output model"],
 ]);
+
+// Uniques whose modelled value is read off a pinned `GLOBAL_UNIQUE_CONTEXT`
+// assumption. These do reach the formula, so the number moves when the
+// assumption does.
+const CONTEXT_PINNED_TYPES = new Map([
+  [103, { key: "deckTypes", label: (value) => `a deck spread of ${value} types` }],
+  [
+    104,
+    {
+      key: "fans",
+      label: (value) => `${Math.round(value).toLocaleString("en-US")} fans`,
+      // The run projection ramps fans from zero across the career, so the
+      // figure quoted there is an endpoint rather than a constant.
+      ramps: true,
+    },
+  ],
+  [
+    106,
+    {
+      key: "friendshipTrainings",
+      label: (value) => `${value} friendship trainings`,
+    },
+  ],
+  [
+    110,
+    {
+      key: "supportsOnTraining",
+      label: (value) => `${value} supports on the training`,
+    },
+  ],
+]);
+
+const CONTEXT_PINNED_FIELDS = {
+  highlander_training: 103,
+  fan_bonus: 104,
+  fs_ramp: 106,
+  crowd_bonus: 110,
+};
+
+// How much of a card's unique the formula actually received.
+//
+// There is no "mostly modelled" tier, and deliberately so. The supported and
+// flattened type sets already cover the ordinary vocabulary — flat training,
+// motivation, friendship, stat and specialty bonuses — so an effect that falls
+// outside them is not an ordinary effect the card has too many of. New type
+// ids exist because the old ones could not express the mechanic. Weighing one
+// against the card's other effects would credit it for having a mundane rider
+// beside the effect that defines it.
+export const MODEL_CONFIDENCE = {
+  MODELLED: "modelled",
+  ASSUMED: "assumed",
+  MISSING: "missing",
+};
 
 // Euophrys flattens a handful of context-dependent uniques into dedicated card
 // fields instead of leaving them in the raw effect list. Each field has a raw
@@ -494,45 +556,115 @@ export function resolveUniqueModifiers(card, trainingType, options = {}) {
   };
 }
 
-function type101Warnings(effect) {
-  const warnings = [];
+/**
+ * Bond-gated bonuses split the same way whole effects do: a bonus the formula
+ * has no term for is a dropped modifier, while one that is simply outside the
+ * metric is a scope note.
+ */
+function type101Notes(effect) {
+  const formula = [];
+  const scope = [];
   for (const key of ["value_1", "value_3"]) {
     const bonusType = Number(effect?.[key]);
     if (!Number.isFinite(bonusType) || bonusType <= 0) continue;
     if (TYPE_101_SUPPORTED_BONUSES.has(bonusType)) continue;
-    warnings.push(
-      TYPE_101_OUTSIDE_BONUSES.get(bonusType) ||
-        `bond-gated bonus type ${bonusType} is not modeled`,
-    );
+    const outside = TYPE_101_OUTSIDE_BONUSES.get(bonusType);
+    if (outside) scope.push(outside);
+    else formula.push(`bond-gated bonus type ${bonusType} is not modeled`);
   }
-  return warnings;
+  return { formula, scope };
 }
 
-export function uniqueModelWarnings(card, profileKey = "gl-late") {
-  const warnings = [];
+/**
+ * Uniques the formula prices off a pinned context assumption rather than off
+ * the player's actual run state.
+ */
+function contextPinnedNotes(card, options) {
+  const pinned = new Set();
+  for (const type of CONTEXT_PINNED_TYPES.keys())
+    if (effects(card).some((effect) => Number(effect?.type) === type))
+      pinned.add(type);
+
+  for (const [field, type] of Object.entries(CONTEXT_PINNED_FIELDS)) {
+    const value = field === "fs_ramp" ? n(card?.fs_ramp?.[0]) : n(card?.[field]);
+    if (value !== 0 && usesFlattenedField(card, field)) pinned.add(type);
+  }
+  if (!pinned.size) return [];
+
+  // Quote the settings the reader is actually looking at, not the module
+  // defaults — this is the one note that names a number, so a stale one is
+  // worse than none.
+  const resolved = context(options);
+  const notes = [
+    `this value assumes ${[...pinned]
+      .map((type) => {
+        const { key, label } = CONTEXT_PINNED_TYPES.get(type);
+        return label(resolved[key]);
+      })
+      .join(", ")}, and moves when that changes`,
+  ];
+
+  if (
+    options?.rampsFans &&
+    [...pinned].some((type) => CONTEXT_PINNED_TYPES.get(type).ramps)
+  )
+    notes.push(
+      "fans ramp from zero across the run, so that figure is where the career ends rather than a constant",
+    );
+
+  return notes;
+}
+
+/**
+ * Splits what the model could not do with a card into two kinds.
+ *
+ * `formulaNotes` are reasons the displayed number may be wrong: effects that
+ * never reached the formula, or values priced off a pinned assumption.
+ * `scopeNotes` describe what the metric deliberately does not cover, which is
+ * a property of the tool rather than a defect in the card's number.
+ *
+ * `options` carries the reader's current settings so a pinned assumption is
+ * quoted at the value actually in use rather than at the module default.
+ * Pass `rampsFans` for the run projection, which ramps fans across the career.
+ */
+export function uniqueModelWarnings(card, profileKey = "gl-late", options = {}) {
+  const formulaNotes = [];
+  const scopeNotes = [];
+
   if (Number(card?.type) >= 5)
-    warnings.push(
+    scopeNotes.push(
       "friend and group supports contribute mostly through hints, energy, and event size, which are outside the training-output metric",
     );
   if (n(card?.wisdom_recovery) > 0)
-    warnings.push(
+    scopeNotes.push(
       "Wit energy recovery from this support is outside the current action-economy model",
     );
+
   if (!hasMetadata(card)) {
-    warnings.push("raw unique metadata was unavailable for this support");
-    return [...new Set(warnings)];
+    formulaNotes.push("raw unique metadata was unavailable for this support");
+    return {
+      severity: MODEL_CONFIDENCE.MISSING,
+      formulaNotes,
+      scopeNotes,
+    };
   }
 
   const coverage =
     UNIQUE_PROFILE_COVERAGE[profileKey] || GLOBAL_UNIQUE_COVERAGE;
+  let missing = false;
+
   for (const effect of effects(card)) {
     const type = Number(effect?.type);
     if (!Number.isFinite(type)) {
-      warnings.push("an unrecognized unique effect is present");
+      formulaNotes.push("an unrecognized unique effect is present");
+      missing = true;
       continue;
     }
     if (type === 101) {
-      warnings.push(...type101Warnings(effect));
+      const notes = type101Notes(effect);
+      formulaNotes.push(...notes.formula);
+      scopeNotes.push(...notes.scope);
+      if (notes.formula.length) missing = true;
       continue;
     }
     if (
@@ -543,12 +675,25 @@ export function uniqueModelWarnings(card, profileKey = "gl-late") {
       continue;
     const outside = OUTSIDE_METRIC_TYPES.get(type);
     if (outside) {
-      warnings.push(outside);
+      scopeNotes.push(outside);
       continue;
     }
-    warnings.push(`unique type ${type} is not certified for ${coverage}`);
+    formulaNotes.push(`unique type ${type} is not certified for ${coverage}`);
+    missing = true;
   }
-  return [...new Set(warnings)];
+
+  const pinned = contextPinnedNotes(card, options);
+  formulaNotes.push(...pinned);
+
+  let severity = MODEL_CONFIDENCE.MODELLED;
+  if (missing) severity = MODEL_CONFIDENCE.MISSING;
+  else if (pinned.length) severity = MODEL_CONFIDENCE.ASSUMED;
+
+  return {
+    severity,
+    formulaNotes: [...new Set(formulaNotes)],
+    scopeNotes: [...new Set(scopeNotes)],
+  };
 }
 
 /**
