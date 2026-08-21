@@ -6,6 +6,7 @@ import {
   calculateCardEV,
   clampFacilityLevel,
   hasFacilityLevelUnique,
+  modelConfidenceMark,
   turnsPerFacilityLevel,
   typeLabel,
   uniqueModelWarnings,
@@ -50,6 +51,13 @@ function rarityMarkup(card) {
 }
 function futureMarkup(card) {
   return card.future ? '<span class="future-chip">FUTURE</span>' : "";
+}
+
+function confidenceMarkup(card, flags) {
+  const mark = modelConfidenceMark(card, flags);
+  return mark
+    ? `<span class="model-dot ${mark.variant}" title="${htmlEscape(mark.title)}">${mark.glyph}</span>`
+    : "";
 }
 function thumbMarkup(card, small = false) {
   return cardImageMarkup(card, { small });
@@ -256,12 +264,20 @@ function initBrowser() {
       return {
         card,
         ev: calculateCardEV(card, options),
-        flags: uniqueModelWarnings(card, options.profile),
+        flags: uniqueModelWarnings(card, options.profile, options),
       };
     });
     const key =
       options.rankMetric === "allPlacement" ? "allPlacementScore" : "specialtyScore";
-    rows.sort((a, b) => b.ev[key] - a.ev[key]);
+    // A card with no specialty training has no Specialty EV, and the column
+    // shows an em dash rather than a number for it. Sorting it in on a hidden
+    // value would put it above cards the metric actually describes, so it
+    // ranks below all of them instead.
+    rows.sort((a, b) => {
+      if (key === "specialtyScore" && a.ev.hasSpecialty !== b.ev.hasSpecialty)
+        return a.ev.hasSpecialty ? -1 : 1;
+      return b.ev[key] - a.ev[key];
+    });
     return rows;
   }
 
@@ -276,9 +292,15 @@ function initBrowser() {
       return;
     }
     const { card, ev, flags } = row;
-    const warning = flags.length
-      ? `<div class="warning-box"><strong>★ Unique not fully modeled:</strong> ${htmlEscape(flags.join(", "))}. The displayed value may omit or inherit an upstream approximation for that effect; treat it as provisional.</div>`
+    // Two different things, kept apart: what could move this number, and what
+    // the metric was never measuring in the first place.
+    const formulaBox = flags.formulaNotes.length
+      ? `<div class="warning-box"><strong>May affect this number:</strong> ${htmlEscape(flags.formulaNotes.join("; "))}.</div>`
       : "";
+    const scopeBox = flags.scopeNotes.length
+      ? `<div class="scope-box"><strong>Outside this metric:</strong> ${htmlEscape(flags.scopeNotes.join("; "))}.</div>`
+      : "";
+    const warning = `${formulaBox}${scopeBox}`;
     const specialtyCells = STAT_NAMES.map(
       (name, i) =>
         `<div class="stat-cell"><span>${name}</span><strong>${fmt(ev.specialtyVector[i])}</strong></div>`,
@@ -316,7 +338,7 @@ function initBrowser() {
         const { card, ev, flags } = row;
         const best = (metric) =>
           index === 0 && metric === bestMetric ? " best" : "";
-        return `<tr data-detail-id="${card.id}" class="${state.activeDetailId === card.id ? "active" : ""}" data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="result-support" data-card-type="${card.type}">${thumbMarkup(card, true)}<div>${titleMarkup(card, "result-titleline")}<div class="name-row"><div class="result-name">${htmlEscape(card.char_name)}${flags.length ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>' : ""}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="result-sub">${htmlEscape(typeLabel(card))} · ${lbLabel(card.limit_break)} · #${card.id}</div></div></div></td><td><div class="metric-main">${fmt(card.specialty_rate, 0)}</div><div class="metric-sub">得意率</div></td><td><div class="metric-main">${pct(ev.appearance.specialty)}</div><div class="metric-sub">preferred training appearance</div></td><td><div class="metric-main">+${fmt(ev.rainbowScore)}</div><div class="metric-sub">extra weighted stats</div></td><td class="${best("specialtyScore").trim()}"><div class="metric-main">${fmt(ev.specialtyScore)}</div><div class="metric-sub">weighted stats / turn</div></td><td class="${best("allPlacementScore").trim()}"><div class="metric-main">${fmt(ev.allPlacementScore)}</div><div class="metric-sub">every room it appears on</div></td></tr>`;
+        return `<tr data-detail-id="${card.id}" class="${state.activeDetailId === card.id ? "active" : ""}" data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="result-support" data-card-type="${card.type}">${thumbMarkup(card, true)}<div>${titleMarkup(card, "result-titleline")}<div class="name-row"><div class="result-name">${htmlEscape(card.char_name)}${confidenceMarkup(card, flags)}</div>${rarityMarkup(card)}${futureMarkup(card)}</div><div class="result-sub">${htmlEscape(typeLabel(card))} · ${lbLabel(card.limit_break)} · #${card.id}</div></div></div></td><td><div class="metric-main">${fmt(card.specialty_rate, 0)}</div><div class="metric-sub">得意率</div></td><td><div class="metric-main">${pct(ev.appearance.specialty)}</div><div class="metric-sub">preferred training appearance</div></td><td><div class="metric-main">+${fmt(ev.rainbowScore)}</div><div class="metric-sub">extra weighted stats</div></td><td class="${best("specialtyScore").trim()}"><div class="metric-main">${ev.hasSpecialty ? fmt(ev.specialtyScore) : "—"}</div><div class="metric-sub">${ev.hasSpecialty ? "weighted stats / turn" : "no specialty training"}</div></td><td class="${best("allPlacementScore").trim()}"><div class="metric-main">${fmt(ev.allPlacementScore)}</div><div class="metric-sub">every room it appears on</div></td></tr>`;
       })
       .join("");
     renderDetails(rows.find((row) => row.card.id === state.activeDetailId) || rows[0]);

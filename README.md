@@ -25,7 +25,13 @@ Three views sit on the same settings:
 
 Both run views count each support's one-time event rewards, scaled by its event-effect size and listed per card rather than folded anonymously into the total. Those figures are the best reasonable event route Euophrys records, not an expectation over branches, and events with random outcomes or skill rewards are not represented at all; the toggle above the run table turns them off.
 
-Race bonuses, hints, energy converting into extra actions, and scenario links remain outside all three views. Context-dependent unique effects are flagged in the UI rather than silently guessed.
+Race bonuses, hints, energy converting into extra actions, and scenario links remain outside all three views. That is the metric's scope rather than a defect in any card's number, so it is stated once here and in the method card and never marked per card.
+
+What *is* marked per card is whether the support's unique reached the formula at all: **★** when any part of it did not, so the score is missing a real term and the rank is unreliable; **☆** when everything arrived but a value is priced off a context assumption such as fan count — the note quotes the figure currently in your settings, and the run projection adds that fans ramp from zero across the career rather than holding at it; **✓** on a `FUTURE` card whose unique resolved anyway.
+
+**★ is not graded by how much is missing, deliberately.** The supported and flattened type sets already cover the ordinary vocabulary — flat training, motivation, friendship, stat and specialty bonuses — so an effect outside them is not one ordinary effect among many, it is the part that makes the card worth owning. Weighing it against the card's other effects would credit it for having a mundane rider beside the mechanic that defines it. One is enough.
+
+The mark follows that alone and never the card's origin: `FUTURE` says a card is newer than the certified data set, which says nothing about whether this particular number is usable.
 
 ## Data source
 
@@ -55,7 +61,7 @@ Two places deliberately diverge from upstream:
 - **A card's marginal value is measured against the same click without it**, and that baseline keeps the trainee's own mood and growth multipliers. Upstream's solo-card branch subtracts the raw base gain instead, which credits every card with the trainee's mood and growth on top of its real contribution — an inflation proportional to the base gains of the card's training type, so it distorts comparisons across types and grows as mood and growth rise.
 - **Bond timing is driven by how often the card is actually picked** (5 bond per selected training, plus a configurable trickle from outings and events) rather than by a fixed deck-wide bond rate. Specialty Priority therefore changes when a card starts rainbowing, which is the main thing the site exists to measure.
 
-Euophrys flattens several context-dependent uniques into dedicated card fields (`crowd_bonus`, `highlander_*`, `fan_bonus`, `fs_ramp`). Each has a raw effect type that models the same mechanic, so the flattened value is used only when the card's raw metadata never declared that effect — never on top of it, and never while the card's unique is still locked at that limit break. `wisdom_recovery` has no training-output equivalent and is disclosed as outside the metric instead.
+Euophrys flattens several context-dependent uniques into dedicated card fields (`crowd_bonus`, `highlander_*`, `fan_bonus`, `fs_ramp`). Each has a raw effect type that models the same mechanic, so the flattened value is used only when the card's raw metadata never declared that effect — never on top of it, and never while the card's unique is still locked at that limit break. `wisdom_recovery` has no training-output equivalent and is listed as outside the metric instead. Raw types 9-13 are flattened into `starting_stats`, which the run and deck projections score, so they are neither read again nor disclosed as missing.
 
 ## GitHub Pages
 

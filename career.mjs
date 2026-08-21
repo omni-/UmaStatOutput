@@ -14,6 +14,7 @@ import {
   GLOBAL_UNIQUE_CONTEXT,
   RAINBOW_BOND_THRESHOLD,
   hasFacilityLevelUnique,
+  modelConfidenceMark,
   turnsPerFacilityLevel,
   uniqueModelWarnings,
   STAT_NAMES,
@@ -336,6 +337,7 @@ export function calculateCareerProjection(card, options = {}) {
     eventSource: event.source,
     profileKey,
     runLabel: run.label,
+    trainingTurns: run.trainingTurns,
     facilityPace,
     baseGainsSwitchTurn: switchTurn,
     turnsPerFacilityLevel: turnsPerFacilityLevel(facilityPace),
@@ -390,6 +392,7 @@ export function bondSourceLabel(career) {
 function initCareerView() {
   const body = document.querySelector("#career-body");
   const wrap = document.querySelector("#career-results");
+  const runChip = document.querySelector("#career-run-chip");
   const selectedRoot = document.querySelector("#selected-cards");
   if (!body || !wrap || !selectedRoot) return;
   let payload = null;
@@ -406,9 +409,16 @@ function initCareerView() {
       .map((card) => ({
         card,
         career: calculateCareerProjection(card, options),
-        flags: uniqueModelWarnings(card, options.profile),
+        flags: uniqueModelWarnings(card, options.profile, {
+          ...options,
+          rampsFans: true,
+        }),
       }))
       .sort((a, b) => b.career.score - a.career.score);
+    // The scenario is one setting shared by every row, so it belongs in the
+    // heading rather than repeated down the table.
+    if (runChip)
+      runChip.textContent = `${rows[0].career.runLabel} · ${rows[0].career.trainingTurns} turns`;
     body.innerHTML = rows
       .map((row, index) => {
         const { card, career, flags } = row;
@@ -443,10 +453,23 @@ function initCareerView() {
         const bondMeta = career.hasSpecialty
           ? `bond ≈ T${career.daysToBond.toFixed(1)} · rainbows ${career.rainbowClicks.toFixed(1)}`
           : "no specialty training";
-        const warnMark = flags.length
-          ? '<span class="warn-dot" title="Unique effect not fully modeled">★</span>'
+        // Every event stat already has its own annotation in the stat cells, so
+        // the meta line carries only what has no column: a mark when the event
+        // figures behind the timing were estimated. Event energy has no
+        // exchange rate into the score, so quoting it in a ranking row invites
+        // a comparison the model cannot make; it stays in the tooltip.
+        const estimateMeta =
+          career.eventSource === "no event estimate"
+            ? " · no event data"
+            : career.eventSource === "rarity fallback"
+              ? " · est. event"
+              : "";
+        const metaTitle = `${career.runLabel} · ${bondSourceLabel(career)} · final bond ${career.finalBond.toFixed(0)}${eventBreakdown(career)}`;
+        const mark = modelConfidenceMark(card, flags);
+        const warnMark = mark
+          ? `<span class="model-dot ${mark.variant}" title="${esc(mark.title)}">${mark.glyph}</span>`
           : "";
-        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${career.runLabel} · ${bondMeta}${facilityMeta}${esc(eventBreakdown(career))} · ${esc(bondSourceLabel(career))} · final bond ${career.finalBond.toFixed(0)}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}${eventMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
+        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta" title="${esc(metaTitle)}">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${bondMeta}${facilityMeta}${estimateMeta}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}${eventMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
       })
       .join("");
     wrap.hidden = false;

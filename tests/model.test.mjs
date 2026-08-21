@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  MODEL_CONFIDENCE,
   calculateAppearance,
   calculateCardEV,
   calculateMarginalTraining,
+  effectiveStartingStats,
+  modelConfidenceMark,
   portraitImageUrl,
   remoteSupportImageUrl,
   specialUniqueUnlocked,
@@ -128,27 +131,136 @@ test("flattened fields stay off while the card's unique is still locked", () => 
   );
 });
 
-test("Wit energy recovery is disclosed rather than scored", () => {
+test("Wit energy recovery is a scope note, not a confidence problem", () => {
   const recovery = { ...card, wisdom_recovery: 3 };
+  const notes = uniqueModelWarnings(recovery);
   assert.ok(
-    uniqueModelWarnings(recovery).some((warning) =>
-      warning.includes("energy recovery"),
-    ),
+    notes.scopeNotes.some((note) => note.includes("energy recovery")),
   );
+  assert.equal(notes.formulaNotes.length, 0);
+  assert.equal(notes.severity, MODEL_CONFIDENCE.MODELLED);
+  assert.equal(modelConfidenceMark(recovery, notes), null);
   assert.deepEqual(
     calculateCardEV(recovery).specialtyVector,
     calculateCardEV(card).specialtyVector,
   );
 });
 
-test("missing unique metadata is flagged alongside the other disclosures", () => {
-  const warnings = uniqueModelWarnings({
+test("missing unique metadata is a formula note and marks as missing", () => {
+  const blind = { ...card, special_uniques: null, wisdom_recovery: 2 };
+  const notes = uniqueModelWarnings(blind);
+  assert.ok(notes.formulaNotes.some((note) => note.includes("unavailable")));
+  assert.ok(notes.scopeNotes.some((note) => note.includes("energy recovery")));
+  assert.equal(notes.severity, MODEL_CONFIDENCE.MISSING);
+});
+
+test("unique-granted initial stats are scored, so they raise no note", () => {
+  // Euophrys flattens raw types 9-13 into starting_stats, which the run and
+  // deck projections already count. Disclosing them would be false.
+  const initial = {
     ...card,
-    special_uniques: null,
-    wisdom_recovery: 2,
-  });
-  assert.ok(warnings.some((warning) => warning.includes("unavailable")));
-  assert.ok(warnings.some((warning) => warning.includes("energy recovery")));
+    starting_stats: [0, 0, 0, 0, 20],
+    special_uniques: [{ type: 13, value: 20 }],
+  };
+  const notes = uniqueModelWarnings(initial);
+  assert.equal(notes.formulaNotes.length, 0);
+  assert.equal(notes.scopeNotes.length, 0);
+  assert.deepEqual(effectiveStartingStats(initial), [0, 0, 0, 0, 20, 0]);
+});
+
+test("one unmodeled effect is enough, however many others resolve", () => {
+  // The ordinary vocabulary is already modeled, so a leftover effect is the
+  // part that makes the card worth owning. Counting it against the card's
+  // mundane riders would dilute exactly the thing that matters.
+  const alongsideModelled = {
+    ...card,
+    special_uniques: [
+      { type: 8, value: 5 },
+      { type: 1, value: 5 },
+      { type: 2, value: 5 },
+      { type: 900, value: 5 },
+    ],
+  };
+  const alone = { ...card, special_uniques: [{ type: 900, value: 5 }] };
+  assert.equal(
+    uniqueModelWarnings(alongsideModelled).severity,
+    MODEL_CONFIDENCE.MISSING,
+  );
+  assert.equal(uniqueModelWarnings(alone).severity, MODEL_CONFIDENCE.MISSING);
+});
+
+test("the mark follows severity and not where the card comes from", () => {
+  const uncertified = [{ type: 8, value: 5 }, { type: 900, value: 5 }];
+  const global = { ...card, future: false, special_uniques: uncertified };
+  const future = { ...card, future: true, special_uniques: uncertified };
+
+  assert.equal(
+    modelConfidenceMark(global, uniqueModelWarnings(global)).variant,
+    "missing",
+  );
+  assert.equal(
+    modelConfidenceMark(future, uniqueModelWarnings(future)).variant,
+    "missing",
+  );
+});
+
+test("a FUTURE card whose unique resolves is marked as modelled", () => {
+  const future = { ...card, future: true, special_uniques: [{ type: 8, value: 5 }] };
+  const mark = modelConfidenceMark(future, uniqueModelWarnings(future));
+  assert.equal(mark.variant, "modelled");
+  // A Global card that resolves is the unremarkable case and stays unmarked.
+  assert.equal(
+    modelConfidenceMark({ ...future, future: false }, uniqueModelWarnings(future)),
+    null,
+  );
+});
+
+test("a pinned assumption quotes the reader's settings, not the defaults", () => {
+  // This is the only note that names a number, so a stale one is worse than
+  // no note at all: the score moves with the setting and the note must too.
+  const pinned = { ...card, fan_bonus: 0.05, special_uniques: [{ type: 8, value: 5 }] };
+  assert.match(
+    uniqueModelWarnings(pinned, "gl-late", { fans: 500000 }).formulaNotes[0],
+    /500,000 fans/,
+  );
+  assert.match(
+    uniqueModelWarnings(pinned, "gl-late").formulaNotes[0],
+    /200,000 fans/,
+  );
+  assert.notEqual(
+    calculateCardEV(pinned, { fans: 500000 }).specialtyScore,
+    calculateCardEV(pinned, { fans: 0 }).specialtyScore,
+  );
+});
+
+test("the run projection says its fan figure is an endpoint", () => {
+  const pinned = { ...card, fan_bonus: 0.05, special_uniques: [{ type: 8, value: 5 }] };
+  const run = uniqueModelWarnings(pinned, "gl-late", { rampsFans: true });
+  assert.ok(run.formulaNotes.some((note) => note.includes("ramp from zero")));
+  // The per-click view holds fans constant, so it must not claim a ramp.
+  const click = uniqueModelWarnings(pinned, "gl-late");
+  assert.ok(!click.formulaNotes.some((note) => note.includes("ramp from zero")));
+});
+
+test("a pinned assumption is marked apart from a missing effect", () => {
+  const dropped = { ...card, special_uniques: [{ type: 900, value: 5 }] };
+  const pinned = { ...card, fan_bonus: 0.05, special_uniques: [{ type: 8, value: 5 }] };
+  assert.equal(
+    modelConfidenceMark(dropped, uniqueModelWarnings(dropped)).variant,
+    "missing",
+  );
+  assert.equal(
+    modelConfidenceMark(pinned, uniqueModelWarnings(pinned)).variant,
+    "assumed",
+  );
+});
+
+test("context-pinned uniques are a formula note", () => {
+  const pinned = { ...card, fan_bonus: 0.05, special_uniques: [{ type: 8, value: 5 }] };
+  const notes = uniqueModelWarnings(pinned);
+  assert.ok(notes.formulaNotes.some((note) => note.includes("fans")));
+  // Nothing was dropped — the value is real, it just rests on an assumption.
+  assert.equal(notes.severity, MODEL_CONFIDENCE.ASSUMED);
 });
 
 test("card art is served locally with the upstream host as the fallback", () => {

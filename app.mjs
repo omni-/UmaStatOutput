@@ -1,6 +1,7 @@
 import {
   GLOBAL_UNIQUE_CONTEXT,
   GLOBAL_UNIQUE_COVERAGE,
+  MODEL_CONFIDENCE,
   UNIQUE_PROFILE_COVERAGE,
   facilityTrainingBonus,
   effectiveStartingBond,
@@ -14,6 +15,7 @@ import {
 export {
   GLOBAL_UNIQUE_CONTEXT,
   GLOBAL_UNIQUE_COVERAGE,
+  MODEL_CONFIDENCE,
   UNIQUE_PROFILE_COVERAGE,
   facilityTrainingBonus,
   effectiveStartingBond,
@@ -327,6 +329,41 @@ export function weightedSum(vector, spWeight = 1.2, statWeights = null) {
       sum + value * (index === 5 ? spWeight : weights[index]),
     0,
   );
+}
+
+/**
+ * The mark shown beside a card's name for whether its unique reached the
+ * formula. Returns `null` when there is nothing worth marking.
+ *
+ * `★` is not graded by how much is missing. The ordinary effect vocabulary is
+ * already modeled, so anything left over is the part that makes the card worth
+ * owning, and one of them is enough to make the score a floor rather than a
+ * measurement.
+ *
+ * The mark is driven by severity alone, never by where the card comes from. A
+ * FUTURE card is expected to carry effect types newer than the certified data
+ * set, but that on its own says nothing about whether this card's number is
+ * usable — most future cards resolve cleanly, so they earn a `✓` rather than
+ * silence.
+ */
+export function modelConfidenceMark(card, notes) {
+  if (notes.severity === MODEL_CONFIDENCE.MODELLED)
+    return card?.future
+      ? {
+          glyph: "✓",
+          variant: "modelled",
+          title: "Unique fully modeled, despite this card being outside the certified data set",
+        }
+      : null;
+
+  const title = notes.formulaNotes.join("; ");
+  return notes.severity === MODEL_CONFIDENCE.MISSING
+    ? {
+        glyph: "★",
+        variant: "missing",
+        title: `${title}. The score is missing a real term, so treat the rank as unreliable`,
+      }
+    : { glyph: "☆", variant: "assumed", title };
 }
 
 export function calculateCardEV(card, options = {}) {
