@@ -112,7 +112,7 @@ function initBrowser() {
     history.replaceState(null, "", location.pathname + location.search);
 
   els.includeFuture.checked = Boolean(stored?.includeFuture);
-  els.search.placeholder = "Search title, character, or support ID…";
+  els.search.placeholder = "Find a support by character, card title, or ID…";
   els.growthGrid.innerHTML = GROWTH_NAMES.map(
     (name, i) =>
       `<div class="growth-field"><label for="growth-${i}">${name} %</label><input id="growth-${i}" data-growth-index="${i}" type="number" min="0" max="100" step="1" value="0" /></div>`,
@@ -236,8 +236,8 @@ function initBrowser() {
     els.selectedCount.textContent = state.selected.length;
     if (!state.selected.length) {
       els.selectedCards.className = "selected-cards empty-state";
-      els.selectedCards.textContent =
-        "Search for a card above. Global cards are shown by default; enable Future cards to include supports currently available only in JP.";
+      els.selectedCards.innerHTML =
+        '<span class="roster-icon" aria-hidden="true">＋</span><strong>Your roster starts here</strong><span>Search for a support to compare its full-run gains. Add up to 10; deck projections use the first 6.</span>';
       return;
     }
     els.selectedCards.className = "selected-cards";

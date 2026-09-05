@@ -451,7 +451,9 @@ function initCareerView() {
             ? `+${formatOneTimeStat(career.eventScore)} event · `
             : "";
         const bondMeta = career.hasSpecialty
-          ? `bond ≈ T${career.daysToBond.toFixed(1)} · rainbows ${career.rainbowClicks.toFixed(1)}`
+          ? career.daysToBond >= career.trainingTurns
+            ? "does not reach friendship training"
+            : `friendship ≈ T${career.daysToBond.toFixed(1)} · rainbows ${career.rainbowClicks.toFixed(1)}`
           : "no specialty training";
         // Every event stat already has its own annotation in the stat cells, so
         // the meta line carries only what has no column: a mark when the event
@@ -464,12 +466,22 @@ function initCareerView() {
             : career.eventSource === "rarity fallback"
               ? " · est. event"
               : "";
+        const bondTimeline = career.hasSpecialty
+          ? `<div class="bond-timeline" role="img" aria-label="${esc(bondMeta)} over ${career.trainingTurns} training turns"><span class="bond-track"><span class="bond-before" style="width:${Math.min(100, Math.max(0, career.daysToBond / career.trainingTurns * 100)).toFixed(2)}%"></span></span><span class="bond-labels"><span>T0</span><span>80 bond → friendship</span><span>T${career.trainingTurns}</span></span></div>`
+          : "";
         const metaTitle = `${career.runLabel} · ${bondSourceLabel(career)} · final bond ${career.finalBond.toFixed(0)}${eventBreakdown(career)}`;
+        const modelNotes = flags.formulaNotes.length
+          ? `<p><strong>May affect this number:</strong> ${esc(flags.formulaNotes.join("; "))}.</p>`
+          : "";
+        const scopeNotes = flags.scopeNotes.length
+          ? `<p><strong>Outside this metric:</strong> ${esc(flags.scopeNotes.join("; "))}.</p>`
+          : "";
+        const notes = `<details class="career-assumptions"><summary>Model &amp; bond notes</summary><p>${esc(metaTitle)}</p>${modelNotes}${scopeNotes}</details>`;
         const mark = modelConfidenceMark(card, flags);
         const warnMark = mark
           ? `<span class="model-dot ${mark.variant}" title="${esc(mark.title)}">${mark.glyph}</span>`
           : "";
-        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta" title="${esc(metaTitle)}">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${bondMeta}${facilityMeta}${estimateMeta}</div></div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}${eventMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
+        return `<tr data-card-type="${card.type}"><td class="rank">${index + 1}</td><td><div class="career-support">${portrait(card)}<div class="career-support-copy">${title(card)}<div class="name-row"><div class="career-card-name">${esc(card.char_name)}${warnMark}</div><span class="rarity-chip">${rarity(card)}</span></div><div class="career-card-meta" title="${esc(metaTitle)}">${esc(typeLabel(card))} · ${lbLabel(card.limit_break)} · ${bondMeta}${facilityMeta}${estimateMeta}</div>${bondTimeline}${notes}</div></div></td>${stats}<td class="${index === 0 ? "best" : ""}"><div class="metric-main">${career.score.toFixed(1)}</div><div class="metric-sub">${initialMeta}${eventMeta}SP × ${options.spWeight.toFixed(1)}</div></td></tr>`;
       })
       .join("");
     wrap.hidden = false;
