@@ -431,10 +431,10 @@ function initCareerView() {
               ? career.eventVector[stat]
               : 0;
             const initialLabel = initial
-              ? `<span class="career-initial"> (+${formatOneTimeStat(initial)} initial)</span>`
+              ? `<span class="career-initial">+${formatOneTimeStat(initial)} initial</span>`
               : "";
             const eventLabel = eventStat
-              ? `<span class="career-initial"> (${eventStat > 0 ? "+" : "−"}${formatOneTimeStat(Math.abs(eventStat))} event)</span>`
+              ? `<span class="career-initial">${eventStat > 0 ? "+" : "−"}${formatOneTimeStat(Math.abs(eventStat))} event</span>`
               : "";
             return `<td class="career-stat"><strong>${Number(value).toFixed(1)}</strong>${initialLabel}${eventLabel}</td>`;
           })
