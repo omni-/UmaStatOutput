@@ -11,10 +11,10 @@
 </head>
 <body>
   <div class="shell">
-    <header class="hero"><div><div class="eyebrow">TRAINER’S DESK <span class="header-edition">UMAMUSUME · GLOBAL</span></div><h1>Uma Stat Output<span class="title-mark" aria-hidden="true">↗</span></h1><p class="lede">See what each support contributes over a full run, from building bond to friendship training.</p></div><div class="source-pill" id="source-pill">Loading support data…</div></header>
+    <header class="hero"><div><div class="eyebrow">Umamusume · Global</div><h1>Uma Stat Output<svg class="title-mark" viewBox="0 0 48 52" aria-hidden="true"><path d="M8 4H19V25a5 5 0 0 0 10 0V4H40V26a16 16 0 0 1-32 0Z" fill="currentColor" stroke="#b27616" stroke-width="1.5"/><path d="M11 7h5M32 7h5" stroke="#fff5b5" stroke-width="2"/><g fill="#fff6cc"><circle cx="13.5" cy="15" r="1.8"/><circle cx="13.5" cy="24" r="1.8"/><circle cx="17" cy="34" r="1.8"/><circle cx="24" cy="37" r="1.8"/><circle cx="31" cy="34" r="1.8"/><circle cx="34.5" cy="24" r="1.8"/><circle cx="34.5" cy="15" r="1.8"/></g></svg></h1><p class="lede">See what each support contributes over a full run, from building bond to friendship training.</p></div><div class="source-pill" id="source-pill">Loading support data…</div></header>
     <main>
       <section class="panel controls-panel">
-        <div class="panel-heading"><div><div class="section-kicker">01 / SETUP</div><h2>Run conditions</h2></div><button class="ghost-button" id="reset-settings" type="button">Reset</button></div>
+        <div class="panel-heading"><div><h2>Run conditions</h2></div><button class="ghost-button" id="reset-settings" type="button">Reset</button></div>
         <div class="control-grid">
           <label class="control-card"><span class="control-label">Scenario & training</span><select id="training-profile"><option value="gl-late">Grand Live · late-run</option><option value="gl-summer">Grand Live · summer</option><option value="unity-late">Unity Cup · late-run</option></select><span class="control-help">Sets training gains, Specialty Priority, SP value, and facility defaults.</span></label>
           <label class="control-card"><span class="control-label">Mood</span><select id="motivation"><option value="0.2">Great · +20%</option><option value="0.1">Good · +10%</option><option value="0">Normal · 0%</option><option value="-0.1">Bad · −10%</option><option value="-0.2">Awful · −20%</option></select><span class="control-help">Your trainee’s mood bonus applies to training gains.</span></label>
@@ -35,14 +35,14 @@
         </div></details>
       </section>
       <section class="panel cards-panel">
-        <div class="panel-heading"><div><div class="section-kicker">02 / ROSTER</div><h2>Support cards</h2></div><div class="card-heading-actions">
+        <div class="panel-heading"><div><h2>Support cards</h2></div><div class="card-heading-actions">
           <label class="future-toggle" title="Include JP support cards that have not released on Global yet"><span class="future-switch"><input id="include-future" type="checkbox" /><span class="future-switch-track"></span></span><span>Future cards</span></label>
           <div class="count-badge"><span id="selected-count">0</span> / 10</div><button class="ghost-button" id="share-link" type="button">Copy link</button><span id="share-status" class="share-status" role="status"></span><button class="ghost-button" id="reset-cards" type="button">Reset</button>
         </div></div>
         <div class="search-wrap"><input id="card-search" type="search" autocomplete="off" aria-label="Search support cards" placeholder="Find a support by character, card title, or ID…" /><div id="search-results" class="search-results" hidden></div></div>
         <div id="selected-cards" class="selected-cards empty-state"><span class="roster-icon" aria-hidden="true">＋</span><strong>Your roster starts here</strong><span>Search for a support to compare its full-run gains. Add up to 10; deck projections use the first 6.</span></div>
       </section>
-      <section class="panel results-panel"><div class="panel-heading results-heading"><div><div class="section-kicker">03 / ANALYSIS</div><h2>Projected support gains</h2></div></div><div id="results-empty" class="results-empty">Add a support card to see its projected stats over a full run and when friendship training begins.</div><div id="results" hidden>
+      <section class="panel results-panel"><div class="panel-heading results-heading"><div><h2>Projected support gains</h2></div></div><div id="results-empty" class="results-empty">Add a support card to see its projected stats over a full run and when friendship training begins.</div><div id="results" hidden>
         <div class="analysis-toolbar"><div class="view-tabs" role="tablist" aria-label="Projection view">
           <button type="button" id="tab-run" role="tab" aria-selected="true" aria-controls="view-run">Run projection</button>
           <button type="button" id="tab-deck" role="tab" aria-selected="false" aria-controls="view-deck" tabindex="-1">Deck projection</button>
