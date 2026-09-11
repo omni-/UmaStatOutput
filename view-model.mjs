@@ -130,8 +130,11 @@ export function cardImageMarkup(card, { portrait = false, small = false } = {}) 
   const source = portrait ? portraitImageUrl(card) : supportImageUrl(card.id);
   const fallback = remoteSupportImageUrl(card.id);
   const wrapperClass = `accent-card-thumb${portrait ? " portrait-card-thumb" : ""}${small ? " small" : ""}`;
+  const pips = !small
+    ? `<span class="art-pips" aria-hidden="true">${Array.from({ length: 4 }, (_, i) => `<i class="${i < Number(card.limit_break) ? "filled" : ""}"></i>`).join("")}</span>`
+    : "";
   const imageClass = `card-thumb${portrait ? " portrait-thumb" : ""}`;
-  return `<div class="${wrapperClass}"><img class="${imageClass}" src="${htmlEscape(source)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${htmlEscape(fallback)}'" /></div>`;
+  return `<div class="${wrapperClass}"><img class="${imageClass}" src="${htmlEscape(source)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${htmlEscape(fallback)}'" />${pips}</div>`;
 }
 
 export function formatNumber(value, digits = 2) {
